@@ -1,0 +1,90 @@
+[tool.poetry]
+name = "kutsu"
+version = "0.1.0"
+description = ""
+authors = ["Mikko Kortelainen <mikko.kortelainen@techelp.fi>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+nest-asyncio = "^1.5.6"
+
+[tool.poetry.dev-dependencies]
+pytest = "^5.2"
+pylint = "^2.15.5"
+flake8 = "^5.0.4"
+isort = "^5.10.1"
+mypy = "^0.982"
+yapf = "^0.32.0"
+toml = "^0.10.2"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.isort]
+multi_line_output = 3
+use_parentheses = true
+include_trailing_comma = true
+line_length = 100
+
+[tool.yapf]
+based_on_style = "pep8"
+column_limit = 100
+dedent_closing_brackets = true
+allow_split_before_dict_value = false
+
+[tool.pylint.master]
+ignore = ["tests_old","migrations"]
+ignore-patterns = ["conftest","test_*",".*_test","case"]
+
+[tool.pylint.messages_control]
+disable=[
+    "invalid-name",
+    "fixme",
+    "useless-import-alias",         # For mypy no_implicit_reexport
+    "import-outside-toplevel",
+    "too-few-public-methods",
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.reports]
+output-format = "parseable"
+
+[tool.pyright]
+reportGeneralTypeIssues = false
+
+[tool.mypy]
+python_version = "3.10"
+namespace_packages = true
+pretty = true
+# plugins = "sqlmypy"
+
+# Strict mode checks:
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_reexport = true
+
+# Other checks:
+strict_equality = true
+strict_optional = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = [
+    'nest_asyncio'
+]
+ignore_missing_imports = true

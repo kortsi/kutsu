@@ -1,0 +1,12 @@
+.env
+.envrc
+.idea
+.vscode
+__pycache__
+.mypy_cache
+.pytest_cache
+.DS_Store
+pip-wheel-metadata/
+*.swp
+*~
+*.pyc
