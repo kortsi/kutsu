@@ -1,0 +1,93 @@
+#!/bin/bash
+PATH="$(cd "$(dirname "$0")" >/dev/null 2>&1 && pwd)":$PATH
+
+clear
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+BLUE='\033[1;34m'
+PLAIN='\033[0m'
+
+echo
+printf "${BLUE}"
+echo '######################'
+echo '#       isort        #'
+echo '######################'
+printf "${PLAIN}"
+echo
+
+isort --check-only kutsu tests
+ISORT_RETVAL="$?"
+
+echo
+printf "${BLUE}"
+echo '######################'
+echo '#       mypy         #'
+echo '######################'
+printf "${PLAIN}"
+echo
+
+mypy kutsu
+MYPY_RETVAL="$?"
+
+echo
+printf "${BLUE}"
+echo '######################'
+echo '#      flake8        #'
+echo '######################'
+printf "${PLAIN}"
+echo
+
+flake8 kutsu tests
+FLAKE8_RETVAL="$?"
+
+echo
+printf "${BLUE}"
+echo '######################'
+echo '#      pylint        #'
+echo '######################'
+printf "${PLAIN}"
+echo
+
+pylint -j0 kutsu tests
+PYLINT_RETVAL="$?"
+
+if [ ! "$FLAKE8_RETVAL$PYLINT_RETVAL$MYPY_RETVAL$ISORT_RETVAL" = "0000" ]; then
+
+
+    printf "${RED}"
+    echo '################################################################'
+    echo '#                        LINT SUMMARY                          #'
+    echo '#                                                              #'
+
+    if [ ! "$FLAKE8_RETVAL" = "0" ]; then
+        echo '# ! flake8 reported problems                                   #'
+    fi
+
+    if [ ! "$PYLINT_RETVAL" = "0" ]; then
+        echo '# ! pylint reported problems                                   #'
+    fi
+
+    if [ ! "$MYPY_RETVAL" = "0" ]; then
+        echo '# ! mypy reported problems                                     #'
+    fi
+
+    if [ ! "$ISORT_RETVAL" = "0" ]; then
+        echo '# ! isort reported problems                                    #'
+    fi
+
+    echo '#                                                              #'
+    echo '#              Problems were found. Please fix.                #'
+    echo '################################################################'
+    printf "${PLAIN}"
+    exit 1
+fi
+
+printf "${GREEN}"
+echo '################################################################'
+echo '#                        LINT SUMMARY                          #'
+echo '#                                                              #'
+echo '#                                                              #'
+echo '#                         All good!                            #'
+echo '################################################################'
+printf "${PLAIN}"

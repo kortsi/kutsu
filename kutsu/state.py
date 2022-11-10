@@ -65,11 +65,16 @@ class MetaChainable(type):
     def __repr__(cls) -> str:
         return f'Chainable<{cls.__name__}>'
 
-    def __rshift__(cls, other: Chainable | Type[Chainable]) -> SyncOrAsyncChain:
+    def __rshift__(
+        cls,
+        other: Chainable | Type[Chainable] | State | Type[State] | StateTransformer | dict[str, Any]
+    ) -> SyncOrAsyncChain:
         self: Chainable = cls()
         return self.__rshift__(other)
 
-    def __rrshift__(cls, other: State | Type[State] | dict[str, Any]) -> SyncOrAsyncChain:
+    def __rrshift__(
+        cls, other: State | Type[State] | StateTransformer | dict[str, Any]
+    ) -> SyncOrAsyncChain:
         self: Chainable = cls()
         return self.__rrshift__(other)
 
@@ -101,13 +106,12 @@ class Chainable(metaclass=MetaChainable):
 
     def __rshift__(
         self,
-        other: Chainable | Type[Chainable] | State | Type[State] | dict[str, Any],
+        other: Chainable | Type[Chainable] | State | Type[State] | StateTransformer
+        | dict[str, Any],
     ) -> SyncOrAsyncChain:
         """Combine chainables into a new chain"""
         if inspect.isclass(other):
             other = other()
-        if not isinstance(other, (Chainable, State, dict)):
-            return NotImplemented
 
         if isinstance(self, (Chain, AsyncChain)):
             # We must append actions to this existing chain
@@ -131,9 +135,17 @@ class Chainable(metaclass=MetaChainable):
                 return override(state)
 
             b = [Action(override_state)]  # type: ignore
-        else:
+        elif isinstance(other, Chainable):
             # We just append the chainable
             b = [other]  # type: ignore
+        elif sync_callable(other):
+            # We create an action that transforms state with this function
+            b = [Action(other)]  # type: ignore
+        elif async_callable(other):
+            # We create an action that transforms state with this coroutine
+            b = [AsyncAction(other)]  # type: ignore
+        else:
+            return NotImplemented
 
         new_chain = a + b
 
@@ -142,23 +154,35 @@ class Chainable(metaclass=MetaChainable):
 
         return AsyncChain(new_chain)  # type: ignore
 
-    def __rrshift__(self, other: State | Type[State] | dict[str, Any]) -> SyncOrAsyncChain:
+    def __rrshift__(
+        self, other: State | Type[State] | StateTransformer | dict[str, Any]
+    ) -> SyncOrAsyncChain:
         """Chain starting with a State or a dict"""
         if inspect.isclass(other):
             override = other()
         else:
             override = other
-        if not isinstance(override, State) and not isinstance(override, dict):
-            return NotImplemented
-        if isinstance(override, dict):
-            override = State(override)
 
-        # TODO: Perhaps make a proper Action subclass out of this?
-        def override_state(state: State) -> State:
-            return override(state)  # type: ignore
+        if isinstance(override, (State, dict)):
+            if isinstance(override, dict):
+                override = State(override)
 
-        # Return an Action that overrides given state with this state
-        return Action(override_state) >> self
+            # TODO: Perhaps make a proper Action subclass out of this?
+            def override_state(state: State) -> State:
+                return override(state)  # type: ignore
+
+            # Return an Action that overrides given state with this state
+            return Action(override_state) >> self
+
+        if sync_callable(override):
+            # We were given a function or coroutine
+            return Action(override) >> self
+
+        if async_callable(override):
+            # We were given a coroutine
+            return AsyncAction(override) >> self
+
+        return NotImplemented
 
     def __ror__(self, other: dict[str, Any]) -> State:
         """We must be able to: {'key': 'value'} | Action()"""
