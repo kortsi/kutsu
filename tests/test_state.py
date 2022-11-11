@@ -1,53 +1,111 @@
 # type: ignore
 import asyncio
 from time import time
-from types import FunctionType as function
 
 import pytest
 
-from kutsu.state import Action, AsyncAction, AsyncChain, Chain, Parallel, State
-
-
-@pytest.mark.parametrize(
-    'a',
-    [Action, Action(), lambda s: s],
-    ids=['class', 'instance', 'function'],
+from kutsu.state import (
+    Action,
+    AsyncAction,
+    AsyncChain,
+    Chain,
+    Default,
+    Identity,
+    Parallel,
+    Slice,
+    State,
 )
-@pytest.mark.parametrize(
-    'b',
-    [Action, Action(), lambda s: s],
-    ids=['class', 'instance', 'function'],
-)
-def test_make_chain(a, b):
-    if type(a) == function and type(b) == function:
-        pytest.xfail('plain functions cannot be chained')
-
-    chain = a >> b
-    assert isinstance(chain, Chain)
 
 
-async def async_state_transformer(state):
-    return state
+def test_make_state():
+
+    class MyState(State):
+        a = 1  # noqa
+
+    s = MyState(b=2)
+    s.c = 3
+    s['d'] = 4
+
+    assert s.a == s['a'] == 1
+    assert s.b == s['b'] == 2
+    assert s.c == s['c'] == 3
+    assert s.d == s['d'] == 4
 
 
-@pytest.mark.parametrize(
-    'a',
-    [AsyncAction,
-     AsyncAction(), Action,
-     Action(), lambda s: s, async_state_transformer],
-    ids=['async_class', 'async_instance', 'sync_class', 'sync_instance', 'function', 'coroutine'],
-)
-@pytest.mark.parametrize(
-    'b',
-    [AsyncAction, AsyncAction()],
-    ids=['class', 'instance'],
-)
-def test_make_async_chain(a, b):
+def test_compare_states():
+    s1 = State(a=1)
+    s2 = State(a=1)
+    s3 = State(a=2)
+    s4 = State(a=1, b=2)
 
-    chain1 = a >> b
-    assert isinstance(chain1, AsyncChain)
-    chain2 = b >> a
-    assert isinstance(chain2, AsyncChain)
+    assert s1 == s2
+    assert s1 != s3
+    assert s1 != s4
+
+    del s4.b
+
+    assert s1 == s4
+
+
+def test_add_state():
+    s = State(a=1)
+    t = State(b=2)
+    u = s + t
+    assert u.a == 1
+    assert u.b == 2
+
+
+def test_action():
+    a = Action()
+    b = Action(lambda state: State(state, value=1))
+
+    s1 = State(value=2)
+    s2 = a(s1)
+    assert s2 == s1
+
+    s3 = State(value=2)
+    s4 = b(s3)
+    assert s4 != s3
+    assert s4.value == 1
+
+
+def test_async_action():
+
+    async def async_transformer(state):
+        return State(state, value=1)
+
+    a = AsyncAction()
+    b = AsyncAction(async_transformer)
+
+    s1 = State(value=2)
+    s2 = s1 | a
+    assert s2.value == 2
+
+    s3 = State(value=2)
+    s4 = s3 | b
+    assert (s4.value == 1)
+
+
+def test_identity():
+    s = State(x=1)
+    t = s | Identity
+    assert t.x == 1
+
+
+def test_default():
+    default = Default(a=1)
+
+    s = State() | default
+    assert s.a == 1
+
+    s = State(a=2) | default
+    assert s.a == 2
+
+
+def test_slice():
+    s1 = State(a=1, b=2, c=3)
+    s2 = s1 | Slice('a', 'c')
+    assert s2 == State(a=1, c=3)
 
 
 def test_parallel():
@@ -65,36 +123,107 @@ def test_many_parallel():
     assert isinstance(par, Parallel)
 
 
-def test_execute_1000_parallel():
+def sync_transformer(state):
+    return state
 
-    n = 1000
-    SLEEP = 0.01
 
-    class Sleeper(AsyncAction):
+@pytest.mark.parametrize(
+    'a',
+    [Action, Action(), lambda s: s, sync_transformer],
+    ids=['class', 'instance', 'lambda', 'function'],
+)
+@pytest.mark.parametrize(
+    'b',
+    [Action, Action()],
+    ids=['class', 'instance'],
+)
+def test_make_chain(a, b):
+    chain1 = a >> b
+    assert isinstance(chain1, Chain)
+    chain2 = b >> a
+    assert isinstance(chain2, Chain)
+
+
+async def async_transformer(state):
+    return state
+
+
+@pytest.mark.parametrize(
+    'a',
+    [
+        AsyncAction,
+        AsyncAction(), Action,
+        Action(), lambda s: s, sync_transformer, async_transformer
+    ],
+    ids=[
+        'async_class', 'async_instance', 'sync_class', 'sync_instance', 'lambda', 'function',
+        'coroutine'
+    ],
+)
+@pytest.mark.parametrize(
+    'b',
+    [AsyncAction, AsyncAction()],
+    ids=['class', 'instance'],
+)
+def test_make_async_chain(a, b):
+    chain1 = a >> b
+    assert isinstance(chain1, AsyncChain)
+    chain2 = b >> a
+    assert isinstance(chain2, AsyncChain)
+
+
+def test_execute_chain():
+
+    class MyTestAction1(Action):
+
+        def __call__(self, state=None):
+            state = super().__call__(state)
+            state.result = 1
+            return state
+
+    class MyTestAction2(Action):
+
+        def __call__(self, state=None):
+            state = super().__call__(state)
+            state.result = 2
+            return state
+
+    s1 = State(result=0) | MyTestAction1()
+    s2 = State(result=0) | MyTestAction2()
+    s3 = State(result=0) | MyTestAction1() >> MyTestAction2()
+    s4 = State(result=0) | MyTestAction2() >> MyTestAction1()
+
+    assert s1.result == 1
+    assert s2.result == 2
+    assert s3.result == 2
+    assert s4.result == 1
+
+
+def test_execute_async_chain():
+
+    class MyTestAction1(AsyncAction):
 
         async def __call__(self, state=None):
             state = await super().__call__(state)
-            await asyncio.sleep(SLEEP)
-            state.results[state.INSTANCE_NUMBER] = True
+            state.result = 1
             return state
 
-    start_time = time()
-    s = State(results=[False] * n) | Sleeper()**n
-    elapsed_time = time() - start_time
+    class MyTestAction2(AsyncAction):
 
-    # If elapsed was less than 1% of the cumulatime time, then it's parallel enough
-    assert elapsed_time < SLEEP * n * 0.01
+        async def __call__(self, state=None):
+            state = await super().__call__(state)
+            state.result = 2
+            return state
 
-    for i in range(n):
-        assert s.results[i] is True
+    s1 = State(result=0) | MyTestAction1()
+    s2 = State(result=0) | MyTestAction2()
+    s3 = State(result=0) | MyTestAction1() >> MyTestAction2()
+    s4 = State(result=0) | MyTestAction2() >> MyTestAction1()
 
-
-def test_add_state():
-    s = State(a=1)
-    t = State(b=2)
-    u = s + t
-    assert u.a == 1
-    assert u.b == 2
+    assert s1.result == 1
+    assert s2.result == 2
+    assert s3.result == 2
+    assert s4.result == 1
 
 
 def test_execute_action():
@@ -220,5 +349,25 @@ def test_execute_parallel():
     assert state.results == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 
-# TODO: test execute Chain
-# TODO: test execute AsyncChain
+def test_execute_1000_parallel():
+
+    n = 1000
+    SLEEP = 0.01
+
+    class Sleeper(AsyncAction):
+
+        async def __call__(self, state=None):
+            state = await super().__call__(state)
+            await asyncio.sleep(SLEEP)
+            state.results[state.INSTANCE_NUMBER] = True
+            return state
+
+    start_time = time()
+    s = State(results=[False] * n) | Sleeper()**n
+    elapsed_time = time() - start_time
+
+    # If elapsed was less than 1% of the cumulatime time, then it's parallel enough
+    assert elapsed_time < SLEEP * n * 0.01
+
+    for i in range(n):
+        assert s.results[i] is True

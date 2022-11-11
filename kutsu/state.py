@@ -339,6 +339,44 @@ class Parallel(AsyncAction):
         return state_
 
 
+class Identity(Action):
+    """An action that returns the state it receives"""
+
+
+class Default(Action):
+    """Uses given state as default. Incoming state will override defaults.
+
+    Eg:
+
+        Default(a=0) >> Action
+
+    Will send a=0 to Action, while:
+
+        State(a=1) | Default(a=0) >> Action
+
+    Will send a=1 to Action.
+    """
+
+    def __init__(self, state: State | None = None, /, **kwargs: Any) -> None:
+        super().__init__()
+        self.bound_state = State(state, **kwargs)
+
+    def __call__(self, state: State | None = None) -> State:
+        return (state or State())(self.bound_state)
+
+
+class Slice(Action):
+    """Get a subset of state"""
+
+    def __init__(self, *keys: str) -> None:
+        super().__init__()
+        self.keys = keys
+
+    def __call__(self, state: State | None = None) -> State:
+        state = state or State()
+        return State(**{k: state[k] for k in self.keys})
+
+
 class Chain(Action):
     """A sequence of synchronous actions"""
     actions: list[SyncStateTransformer]
@@ -398,59 +436,6 @@ class AsyncChain(AsyncAction):
 SyncOrAsyncChain = Union[Chain, AsyncChain]
 
 
-def execute_sync(action: SyncStateTransformer, state: State) -> State:
-    """Execute synchronous action"""
-    if not sync_callable(action):
-        raise RuntimeError('Action must be synchronous')
-    retval = action(state)
-    return retval
-
-
-def execute_async(action: AsyncStateTransformer, state: State) -> State:
-    """Execute asynchronous action
-
-    This function is our gateway from synchronous to asynchronous actions.
-    If an existing event loop is found, the action is executed in that loop.
-    Otherwise a new event loop is created and the action is executed in it."""
-
-    # FIXME: make sure this works in python REPL, ipython, jupyter
-
-    if not async_callable(action):
-        raise RuntimeError('Action must be asynchronous')
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No running loop
-        return asyncio.run(action(state))
-
-    try:
-        import nest_asyncio
-
-        # TODO: this should be optional, configurable and probably only done once
-        nest_asyncio.apply()
-    except ImportError:
-        import warnings
-        warnings.warn(
-            'Package nest_asyncio not found. Unable to patch asyncio to be re-entrant. '
-            'This may cause failure of asynchronous actions.',
-            category=RuntimeWarning,
-        )
-
-    return loop.run_until_complete(action(state))
-
-
-# def execute(action: Action[T, U], state: T) -> U:
-def execute(action: StateTransformer, state: State) -> State:
-    """Execute action using state as input"""
-    if sync_callable(action):
-        return execute_sync(action, state)
-    if async_callable(action):
-        return execute_async(action, state)
-
-    raise TypeError(f"Action {action} is not callable")
-
-
 class MetaState(type):
     """Metaclass for State - convenience methods for adding and oring classes"""
 
@@ -461,6 +446,17 @@ class MetaState(type):
     def __or__(cls, other: StateTransformerArg) -> State:  # type: ignore
         self: State = cls()
         return self.__or__(other)
+
+    def __eq__(cls, other: object) -> bool:
+        self: State = cls()
+
+        if isinstance(other, State):
+            return self.__eq__(other)
+
+        if inspect.isclass(other) and issubclass(other, State):
+            return self.__eq__(other())
+
+        return NotImplemented
 
 
 class State(metaclass=MetaState):
@@ -479,10 +475,44 @@ class State(metaclass=MetaState):
 
     # def __or__(self: T, other: Action[T, U]) -> U:
     def __or__(self, action: StateTransformerArg) -> State:
-        """Execute by piping contents of this state to an action"""
+        """Execute by piping contents of this state to an action
+
+        If the action is asynchronous, and an existing event loop is found,
+        the action is executed in that loop. Otherwise a new event loop is
+        created and the action is executed in it.
+        """
         if inspect.isclass(action):
             action = action()
-        return execute(action, self)
+
+        # return execute(action, self)
+
+        if sync_callable(action):
+            return action(self)
+
+        if async_callable(action):
+            # FIXME: make sure this works in python REPL, ipython, jupyter
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop
+                return asyncio.run(action(self))
+
+            try:
+                import nest_asyncio
+
+                # TODO: this should be optional, configurable and probably only done once
+                nest_asyncio.apply()
+            except ImportError:
+                import warnings
+                warnings.warn(
+                    'Package nest_asyncio not found. Unable to patch asyncio to be re-entrant. '
+                    'This may cause failure of asynchronous actions.',
+                    category=RuntimeWarning,
+                )
+
+            return loop.run_until_complete(action(self))
+
+        return NotImplemented
 
     # def __call__(self: T, state: U, /, **kwargs: V) -> T & U & V:
     def __call__(
@@ -553,6 +583,24 @@ class State(metaclass=MetaState):
     def __iter__(self) -> Iterator[str]:
         return iter(self.__dict__)
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, State):
+            return (
+                all(key in other for key in self) and all(key in self for key in other)
+                and all(self[key] == other[key] for key in self)
+                and all(self[key] == other[key] for key in other)
+            )
+
+        if inspect.isclass(other) and issubclass(other, State):
+            other = other()
+            return (
+                all(key in other for key in self) and all(key in self for key in other)
+                and all(self[key] == other[key] for key in self)
+                and all(self[key] == other[key] for key in other)
+            )
+
+        return NotImplemented
+
     def __repr__(self) -> str:
         name = self.__class__.__name__
         if name == 'State':
@@ -609,6 +657,9 @@ class StateProtocol(Protocol):
         ...
 
     def __setattr__(self, name: str, value: Any) -> None:
+        ...
+
+    def __eq__(self, other: object) -> bool:
         ...
 
 
