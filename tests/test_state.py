@@ -10,6 +10,7 @@ from kutsu.state import (
     AsyncChain,
     Chain,
     Default,
+    Eval,
     Identity,
     Parallel,
     Slice,
@@ -106,6 +107,12 @@ def test_slice():
     s1 = State(a=1, b=2, c=3)
     s2 = s1 | Slice('a', 'c')
     assert s2 == State(a=1, c=3)
+
+
+def test_eval():
+    s = State(a='value', b='${a}')
+    t = s | Eval
+    assert t.b == 'value'
 
 
 def test_parallel():

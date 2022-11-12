@@ -377,6 +377,17 @@ class Slice(Action):
         return State(**{k: state[k] for k in self.keys})
 
 
+class Eval(Action):
+    """Evaluate state. Substitute all variables with their evaluated expressions."""
+
+    def __call__(self, state: State | None = None) -> State:
+        from .expressions import subst_data
+        state = State(state)
+        for key in state:
+            state[key] = subst_data(state[key], state)
+        return state
+
+
 class Chain(Action):
     """A sequence of synchronous actions"""
     actions: list[SyncStateTransformer]

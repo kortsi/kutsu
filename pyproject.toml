@@ -44,6 +44,8 @@ disable=[
     "useless-import-alias",         # For mypy no_implicit_reexport
     "import-outside-toplevel",
     "too-few-public-methods",
+    "too-many-return-statements",
+    "too-many-branches",
     "missing-module-docstring",
     "missing-class-docstring",
     "missing-function-docstring",
