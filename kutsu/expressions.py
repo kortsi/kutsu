@@ -45,7 +45,8 @@ def subst_str(s: str, state: State, mask_secrets: bool = False) -> str:
 
     # variables = {}
     # for v in variable_names:
-    #     variables[v] = subst_data(getattr(state, v, None), state, mask_secrets=mask_secrets)
+    #     variables[v] = subst_data(getattr(state, v, None), state,
+    #  mask_secrets=mask_secrets)
 
     # # for _, a, b, _ in re.findall(tpl.pattern, tpl.template):
     # #     if a or b:
@@ -102,7 +103,8 @@ def reveal_data(data: Any, mask_secrets: bool = False) -> Any:
         secret_value = data.value
         if mask_secrets:
             # print('mask Secret', secret_value)
-            return f'*MASKED[{getattr(type(secret_value), "__name__", str(secret_value))}]*'
+            masked = getattr(type(secret_value), "__name__", str(secret_value))
+            return f'*MASKED[{masked}]*'
         # print('reveal Secret', secret_value)
         return reveal_data(secret_value)
 
@@ -349,7 +351,7 @@ class UnaryNode(Node, metaclass=MetaUnaryNode):  # pylint: disable=abstract-meth
         self.arg0 = arg0
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self.arg0)})"
+        return f'{self.__class__.__name__}({repr(self.arg0)})'
 
     # def __rich_repr__(self) -> Generator[str, None, None]:
     #     yield self.arg0
@@ -370,7 +372,7 @@ class BinaryNode(Node, metaclass=MetaBinaryNode):  # pylint: disable=abstract-me
         self.arg1 = arg1
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self.arg0)}, {repr(self.arg1)})"
+        return f'{self.__class__.__name__}({repr(self.arg0)}, {repr(self.arg1)})'
 
     # def __rich_repr__(self) -> Generator[str, None, None]:
     #     yield self.arg0
@@ -393,7 +395,10 @@ class TernaryNode(Node, metaclass=MetaTernaryNode):  # pylint: disable=abstract-
         self.arg2 = arg2
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self.arg0)}, {repr(self.arg1)}, {repr(self.arg2)})"
+        return (
+            f'{self.__class__.__name__}'
+            f'({repr(self.arg0)}, {repr(self.arg1)}, {repr(self.arg2)})'
+        )
 
     # def __rich_repr__(self) -> Generator[str, None, None]:
     #     yield self.arg0
@@ -593,7 +598,8 @@ class BinaryAlgebraNode(BinaryNode):
         # See if it should be secret
         first_secret = _subst_data(self.arg0, state)
         second_secret = _subst_data(self.arg1, state)
-        if isinstance(first_secret, SecretValue) or isinstance(second_secret, SecretValue):
+        if isinstance(first_secret,
+                      SecretValue) or isinstance(second_secret, SecretValue):
             # We should hide the result
             return SecretValue(data)
 

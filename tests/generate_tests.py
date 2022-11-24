@@ -64,7 +64,8 @@ def pytest_generate_tests(metafunc):
             names = fixed_fixtures
             values.append(
                 [
-                    test_scenario[x][0] if isinstance(test_scenario[x], list) else test_scenario[x]
+                    test_scenario[x][0]
+                    if isinstance(test_scenario[x], list) else test_scenario[x]
                     for x in fixed_fixtures
                 ]
             )

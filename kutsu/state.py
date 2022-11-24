@@ -26,7 +26,8 @@ def short_repr(thing: Any) -> str:
         name = thing.__class__.__name__
         items = {
             k: v
-            for k, v in thing.__dict__.items() if k not in {'COOKIES'} and not k.startswith('_')
+            for k, v in thing.__dict__.items()
+            if k not in {'COOKIES'} and not k.startswith('_')
         }
         if len(items) == 0:
             return '<Empty State>'
@@ -59,7 +60,8 @@ StateTransformerArg = Union[SyncStateTransformerArg, AsyncStateTransformerArg]
 def async_callable(x: Any) -> TypeGuard[AsyncStateTransformer]:
     """True if x is async callable"""
     return (
-        inspect.iscoroutinefunction(x) or inspect.iscoroutinefunction(getattr(x, '__call__', None))
+        inspect.iscoroutinefunction(x)
+        or inspect.iscoroutinefunction(getattr(x, '__call__', None))
     )
 
 
@@ -69,16 +71,18 @@ def sync_callable(x: Any) -> TypeGuard[SyncStateTransformer]:
 
 
 class MetaChainable(type):
-    """Operator overloading for Chainable class. We mostly instantiate classes for convenience.
-    Please don't use this as a metaclass for anything else than a Chainable subclass.
+    """Operator overloading for Chainable class.
+
+    We mostly instantiate classes forconvenience. Please don't use this as a
+    metaclass for anything else than a Chainable subclass.
     """
 
     def __repr__(cls) -> str:
         return cls.__name__
 
     def __rshift__(
-        cls,
-        other: Chainable | Type[Chainable] | State | Type[State] | StateTransformer | dict[str, Any]
+        cls, other: Chainable | Type[Chainable] | State | Type[State] | StateTransformer
+        | dict[str, Any]
     ) -> SyncOrAsyncChain:
         self: Chainable = cls()
         return self.__rshift__(other)
@@ -95,13 +99,16 @@ class MetaChainable(type):
 
 
 class Chainable(metaclass=MetaChainable):
-    """Chainable action. Not very usable on its own - subclass Action or AsyncAction instead.
+    """Chainable action.
 
-    This simply defines the right shift (>>) operator overloading to make chaining possible,
-    as well as allowing dicts to be piped into actions using the or (|) operator overload.
+    Not very usable on its own - subclass Action or AsyncAction instead.
 
-    It is missing the definition of __call__, which is synchronous for Action and asynchronous
-    for AsyncAction, and we cannot define both in this class.
+    This simply defines the right shift (>>) operator overloading to make
+    chaining possible, as well as allowing dicts to be piped into actions using
+    the or (|) operator overload.
+
+    It is missing the definition of __call__, which is synchronous for Action
+    and asynchronous for AsyncAction, and we cannot define both in this class.
     """
 
     # @staticmethod
@@ -310,7 +317,9 @@ def simple_state_merge(state: State, results: list[ParallelState]) -> State:
 class Parallel(AsyncAction):
     """A set of actions that can be executed in parallel"""
 
-    def __init__(self, actions: list[AsyncAction], merge: Optional[MergeFn] = None) -> None:
+    def __init__(
+        self, actions: list[AsyncAction], merge: Optional[MergeFn] = None
+    ) -> None:
         super().__init__()
         for action in actions:
             if not async_callable(action):
@@ -335,7 +344,8 @@ class Parallel(AsyncAction):
 
         for instance_number, action in enumerate(self.actions):
             queue.append(
-                (state_(INSTANCE_NUMBER=instance_number) >> action)(state_)  # type: ignore
+                (state_(INSTANCE_NUMBER=instance_number) >> action)(state_
+                                                                    )  # type: ignore
             )
 
         results: list[ParallelState] = await asyncio.gather(*queue)
@@ -415,8 +425,10 @@ class Chain(Action):
             if not callable(action):
                 raise ValueError('All actions must be callable')
             if async_callable(action):
-                raise ValueError('Chain cannot accept async callables. '
-                                 'Use AsyncChain instead.')
+                raise ValueError(
+                    'Chain cannot accept async callables. '
+                    'Use AsyncChain instead.'
+                )
 
         self.actions = actions
 
@@ -493,7 +505,8 @@ class MetaState(type):
 class State(metaclass=MetaState):
     """Object to hold key-value pairs as attributes"""
 
-    # def __add__(self: T: other: U) -> T & U:  # https://github.com/python/typing/issues/213
+    # def __add__(self: T: other: U) -> T & U:
+    # # https://github.com/python/typing/issues/213
     def __add__(self, other: State | Type[State]) -> State:
         """Combine two states by overriding this state with the other one
 
@@ -536,7 +549,8 @@ class State(metaclass=MetaState):
             except ImportError:
                 import warnings
                 warnings.warn(
-                    'Package nest_asyncio not found. Unable to patch asyncio to be re-entrant. '
+                    'Package nest_asyncio not found. '
+                    'Unable to patch asyncio to be re-entrant. '
                     'This may cause failure of asynchronous actions.',
                     category=RuntimeWarning,
                 )
@@ -552,9 +566,9 @@ class State(metaclass=MetaState):
         /,
         **kwargs: Any
     ) -> State:
-        """Create a new state by applying self to state, overriding given state with values
-        from self. If state is None, a new state is created. Values from kwargs override
-        values from both state and self."""
+        """Create a new state by applying self to state, overriding given state
+        with values from self. If state is None, a new state is created. Values
+        from kwargs override values from both state and self."""
         new_state = State()
         if state is not None:
             if isinstance(state, dict):
@@ -575,7 +589,8 @@ class State(metaclass=MetaState):
         /,
         **kwargs: Any
     ) -> None:
-        """Create a new state, optionally copying values from given state and kwargs"""
+        """Create a new state, optionally copying values from given state and
+        kwargs"""
         # We make sure every class variable is available in self.__dict__
         d = {}
         for var in dir(self.__class__):
@@ -668,12 +683,18 @@ class StateProtocol(Protocol):
         ...
 
     def __call__(
-        self, state: State | Type[State] | dict[str, Any] | None = None, /, **kwargs: Any
+        self,
+        state: State | Type[State] | dict[str, Any] | None = None,
+        /,
+        **kwargs: Any
     ) -> State:
         ...
 
     def __init__(
-        self, state: State | Type[State] | dict[str, Any] | None = None, /, **kwargs: Any
+        self,
+        state: State | Type[State] | dict[str, Any] | None = None,
+        /,
+        **kwargs: Any
     ) -> None:
         ...
 

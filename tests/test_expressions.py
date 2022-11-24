@@ -65,8 +65,10 @@ class TestSubstData:
             'state': State(),
         },
         'Identity': {
-            'output': [True, 1, 'yes', ['true'], False, 0, '', [], None,
-                       dict(a=1, b='2')],
+            'output': [
+                True, 1, 'yes', ['true'], False, 0, '', [], None,
+                dict(a=1, b='2')
+            ],
         },
     }
 
@@ -218,7 +220,9 @@ class TestEqualVar:
     test_scenarios = {
         'DEFAULTS': {
             'IDS': ['True', '1', '"yes"', '["true"]', 'False', '0', '""', '[]', 'None'],
-            'state': State(A=True, B=1, C='yes', D=['true'], a=False, b=0, c='', d=[], e=None),
+            'state': State(
+                A=True, B=1, C='yes', D=['true'], a=False, b=0, c='', d=[], e=None
+            ),
             'arg0': [Var(x) for x in ['A', 'B', 'C', 'D', 'a', 'b', 'c', 'd', 'e']],
             'arg1': [True, 1, 'yes', ['true'], False, 0, '', [], None],
         },
@@ -241,7 +245,9 @@ class TestNotEqualVar:
     test_scenarios = {
         'DEFAULTS': {
             'IDS': ['True', '1', '"yes"', '["true"]', 'False', '0', '""', '[]', 'None'],
-            'state': State(A=True, B=1, C='yes', D=['true'], a=False, b=0, c='', d=[], e=None),
+            'state': State(
+                A=True, B=1, C='yes', D=['true'], a=False, b=0, c='', d=[], e=None
+            ),
             'arg0': [Var(x) for x in ['A', 'B', 'C', 'D', 'a', 'b', 'c', 'd', 'e']],
             'arg1': [False, 2, 'no', ['false'], True, 1, 'x', ['a'], True],
         },
@@ -264,11 +270,12 @@ class TestComparison:
     test_scenarios = {
         'DEFAULTS': {
             'IDS': [
-                'Var("B")-0', 'Var("B")-1', 'Var("B")-2"', 'Var("B")-Var("b")', 'Var("B")-Var("C")'
+                'Var("B")-0', 'Var("B")-1', 'Var("B")-2"', 'Var("B")-Var("b")',
+                'Var("B")-Var("C")'
             ],
             'state': State(B=1, C='yes', b=0, c=''),
-            'arg0': [Var('B'), Var('B'), Var('B'), Var('B'),
-                     Var('C')],
+            'arg0': [Var('B'), Var('B'), Var('B'),
+                     Var('B'), Var('C')],
             'arg1': [0, 1, 2, Var('b'), Var('c')],
         },
         'Gt': {
@@ -381,7 +388,8 @@ class TestContaining:
     test_scenarios = {
         'DEFAULTS': {
             'IDS': [
-                '1-[1,2,3]', '1-[0,2,3]', '[1]-[1,2,3]"', 'Var("a")-Var("b")', 'Var("c")-Var("b")'
+                '1-[1,2,3]', '1-[0,2,3]', '[1]-[1,2,3]"', 'Var("a")-Var("b")',
+                'Var("c")-Var("b")'
             ],
             'state': State(a='a', b=[Var('a'), 'b', 'c']),
             'arg0': [1, 1, [1], Var('a'), Var('c')],
@@ -406,7 +414,9 @@ class TestAlgebra:
 
     test_scenarios = {
         'DEFAULTS': {
-            'state': State(A=True, B=1, C='yes', D=['true'], a=False, b=0, c='', d=[], e=None),
+            'state': State(
+                A=True, B=1, C='yes', D=['true'], a=False, b=0, c='', d=[], e=None
+            ),
         },
         'Add': {
             'function': Add,
@@ -515,7 +525,8 @@ class TestAlgebraOperator:
             'type_': FloorDiv,
             'arg0': [
                 Var('three') // Var('two'),
-                Var('three') // 2, 3 // Var('two'), (Var('one') + Var('two')) // Var('two')
+                Var('three') // 2, 3 // Var('two'),
+                (Var('one') + Var('two')) // Var('two')
             ],
             'output': [1, 1, 1, 1],
         },
@@ -538,7 +549,12 @@ class TestVarSubst:
     test_scenarios = {
         'DEFAULTS': {
             'state': State(
-                a0='find me', a1=Var('a0'), a2=Var('a1'), a3='${a2}', a4='${a3}', a5=Var('a4')
+                a0='find me',
+                a1=Var('a0'),
+                a2=Var('a1'),
+                a3='${a2}',
+                a4='${a3}',
+                a5=Var('a4')
             ),
             'function': Var,
         },
@@ -561,7 +577,12 @@ class TestStrSubst:
     test_scenarios = {
         'DEFAULTS': {
             'state': State(
-                a0='find me', a1=Var('a0'), a2=Var('a1'), a3='${a2}', a4='${a3}', a5=Var('a4')
+                a0='find me',
+                a1=Var('a0'),
+                a2=Var('a1'),
+                a3='${a2}',
+                a4='${a3}',
+                a5=Var('a4')
             ),
         },
         'Var': {
@@ -614,13 +635,17 @@ def test_secret():
 def test_secret_add():
     state = State(secret=Secret('secret_value'))
 
-    assert 'secret_value' not in subst_data(Add(Var('secret'), ''), state, mask_secrets=True)
+    assert 'secret_value' not in subst_data(
+        Add(Var('secret'), ''), state, mask_secrets=True
+    )
 
 
 def test_secret_mul():
     state = State(secret=Secret('secret_value'))
 
-    assert 'secret_value' not in subst_data(Mul(Var('secret'), 2), state, mask_secrets=True)
+    assert 'secret_value' not in subst_data(
+        Mul(Var('secret'), 2), state, mask_secrets=True
+    )
 
 
 class TestLogical:
@@ -632,8 +657,9 @@ class TestLogical:
         'DEFAULTS': {
             'state': State(a=True, b=False, c='c', d=''),
             'IDS': ['Var("a")', 'Var("b")', 'Var("c")', 'Var("d")', 'Var("missing")'],
-            'arg0': [Var('a'), Var('b'), Var('c'),
-                     Var('d'), Var('missing')],
+            'arg0': [Var('a'), Var('b'),
+                     Var('c'), Var('d'),
+                     Var('missing')],
             'arg1': [1, 1, 1, 1, 1],
         },
         'And': {

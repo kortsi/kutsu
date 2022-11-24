@@ -28,11 +28,11 @@ build-backend = "poetry.core.masonry.api"
 multi_line_output = 3
 use_parentheses = true
 include_trailing_comma = true
-line_length = 100
+line_length = 90
 
 [tool.yapf]
 based_on_style = "pep8"
-column_limit = 100
+column_limit = 90
 dedent_closing_brackets = true
 allow_split_before_dict_value = false
 
@@ -58,7 +58,7 @@ disable=[
 ]
 
 [tool.pylint.format]
-max-line-length = 100
+max-line-length = 90
 
 [tool.pylint.reports]
 output-format = "parseable"

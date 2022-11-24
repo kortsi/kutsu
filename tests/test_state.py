@@ -164,8 +164,8 @@ async def async_transformer(state):
         Action(), lambda s: s, sync_transformer, async_transformer
     ],
     ids=[
-        'async_class', 'async_instance', 'sync_class', 'sync_instance', 'lambda', 'function',
-        'coroutine'
+        'async_class', 'async_instance', 'sync_class', 'sync_instance', 'lambda',
+        'function', 'coroutine'
     ],
 )
 @pytest.mark.parametrize(
