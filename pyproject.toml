@@ -7,13 +7,16 @@ authors = ["Mikko Kortelainen <mikko.kortelainen@techelp.fi>"]
 [tool.poetry.dependencies]
 python = "^3.10"
 nest-asyncio = "^1.5.6"
+httpx = "^0.23.0"
+rich = "^12.6.0"
+ipython = "8.4.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.2"
 pylint = "^2.15.5"
 flake8 = "^5.0.4"
 isort = "^5.10.1"
-mypy = "^0.982"
+mypy = "^0.991"
 yapf = "^0.32.0"
 toml = "^0.10.2"
 
@@ -46,6 +49,9 @@ disable=[
     "too-few-public-methods",
     "too-many-return-statements",
     "too-many-branches",
+    "too-many-locals",
+    "too-many-arguments",
+    "too-many-instance-attributes",
     "missing-module-docstring",
     "missing-class-docstring",
     "missing-function-docstring",

@@ -91,6 +91,7 @@ def test_identity():
     s = State(x=1)
     t = s | Identity
     assert t.x == 1
+    assert t == s
 
 
 def test_default():

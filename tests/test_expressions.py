@@ -41,8 +41,6 @@ from kutsu.expressions import (
     Select,
     Sub,
     Var,
-    VarAnd,
-    VarOr,
     subst_data,
     subst_str,
 )
@@ -688,29 +686,6 @@ class TestLogicalOperator:
                 False | Var('c'),
             ],
             'output': [True, 'c', True, 'no', 'c', 'no', True, 'c'],
-        },
-    }
-
-
-class TestLogicalVar:
-
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
-
-    test_scenarios = {
-        'DEFAULTS': {
-            'state': State(a=True, b=False, c='c', d=''),
-            'IDS': ['a', 'b', 'c', 'd', 'missing'],
-            'arg0': ['a', 'b', 'c', 'd', 'missing'],
-            'arg1': [1, 1, 1, 1, 1],
-        },
-        'VarAnd': {
-            'function': VarAnd,
-            'output': [1, None, 1, None, None]
-        },
-        'VarOr': {
-            'function': VarOr,
-            'output': [True, 1, 'c', 1, 1]
         },
     }
 

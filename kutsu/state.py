@@ -3,7 +3,18 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import Any, Awaitable, Callable, Iterator, Optional, Protocol, Type, TypeGuard, Union
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Generator,
+    Iterator,
+    Optional,
+    Protocol,
+    Type,
+    TypeGuard,
+    Union,
+)
 
 
 def short_repr(thing: Any) -> str:
@@ -63,7 +74,7 @@ class MetaChainable(type):
     """
 
     def __repr__(cls) -> str:
-        return f'Chainable<{cls.__name__}>'
+        return cls.__name__
 
     def __rshift__(
         cls,
@@ -84,7 +95,7 @@ class MetaChainable(type):
 
 
 class Chainable(metaclass=MetaChainable):
-    """Chainable action. Not very usable by itself - subclass Action or AsyncAction instead.
+    """Chainable action. Not very usable on its own - subclass Action or AsyncAction instead.
 
     This simply defines the right shift (>>) operator overloading to make chaining possible,
     as well as allowing dicts to be piped into actions using the or (|) operator overload.
@@ -93,16 +104,16 @@ class Chainable(metaclass=MetaChainable):
     for AsyncAction, and we cannot define both in this class.
     """
 
-    @staticmethod
-    def from_func(
-        func: Callable[[State], State] | Callable[[State], Awaitable[State]]
-    ) -> Action | AsyncAction:
-        if async_callable(func):
-            return AsyncAction(func)
-        return Action(func)  # type: ignore
+    # @staticmethod
+    # def from_func(
+    #     func: Callable[[State], State] | Callable[[State], Awaitable[State]]
+    # ) -> Action | AsyncAction:
+    #     if async_callable(func):
+    #         return AsyncAction(func)
+    #     return Action(func)  # type: ignore
 
-    def __repr__(self) -> str:
-        return f'{self.__class__.__name__}()'
+    # def __repr__(self) -> str:
+    #     return f'{self.__class__.__name__}()'
 
     def __rshift__(
         self,
@@ -191,40 +202,40 @@ class Chainable(metaclass=MetaChainable):
 
 
 class MetaAction(MetaChainable):
-    """Operator overloading for Action"""
+    """Metaclass for Action"""
 
     def __repr__(cls) -> str:
-        return f'Action<{cls.__name__}>'
+        return cls.__name__
 
 
 class Action(Chainable, metaclass=MetaAction):
     """Synchronous action"""
-    func: Callable[[State], State] | None
+    _func: Callable[[State], State] | None
 
     def __init__(self, func: Callable[[State], State] | None = None) -> None:
         if func is not None and not sync_callable(func):
             raise TypeError('Expected non-coroutine function')
-        self.func = func
+        self._func = func
 
     def __call__(
         self,  # pylint:disable=unused-variable
         state: State | None = None,
     ) -> State:
-        if self.func is not None:
-            return self.func(state or State())
+        if self._func is not None:
+            return self._func(state or State())
         return state or State()
 
     def __repr__(self) -> str:
-        if self.func is not None:
-            return f'{self.__class__.__name__}<function {self.func.__name__}>()'
+        if self._func is not None:
+            return f'{self.__class__.__name__}(function {self._func.__name__})()'
         return f'{self.__class__.__name__}()'
 
 
 class MetaAsyncAction(MetaChainable):
-    """Operator overloading for AsyncAction"""
+    """Metaclass for AsyncAction"""
 
     def __repr__(cls) -> str:
-        return f'AsyncAction<{cls.__name__}>'
+        return cls.__name__
 
     def __floordiv__(cls, other: AsyncAction) -> Parallel:
         # Return type would be Parallel[Intersection[S, U], Intersection[T,V]] if
@@ -241,12 +252,12 @@ class MetaAsyncAction(MetaChainable):
 
 class AsyncAction(Chainable, metaclass=MetaAsyncAction):
     """An asynchronous action"""
-    coro: Callable[[State], Awaitable[State]] | None
+    _coro: Callable[[State], Awaitable[State]] | None
 
     def __init__(self, coro: Callable[[State], Awaitable[State]] | None = None) -> None:
         if coro is not None and not async_callable(coro):
             raise TypeError('Expected coroutine function')
-        self.coro = coro
+        self._coro = coro
 
     def __floordiv__(self, other: AsyncAction) -> Parallel:
         """Parallelize actions"""
@@ -279,13 +290,13 @@ class AsyncAction(Chainable, metaclass=MetaAsyncAction):
         self,  # pylint:disable=unused-variable
         state: State | None = None,
     ) -> State:
-        if self.coro is not None:
-            return await self.coro(state or State())
+        if self._coro is not None:
+            return await self._coro(state or State())
         return state or State()
 
     def __repr__(self) -> str:
-        if self.coro is not None:
-            return f'{self.__class__.__name__}<coroutine {self.coro.__name__}>()'
+        if self._coro is not None:
+            return f'{self.__class__.__name__}(coroutine {self._coro.__name__})()'
         return f'{self.__class__.__name__}()'
 
 
@@ -341,6 +352,12 @@ class Parallel(AsyncAction):
 
 class Identity(Action):
     """An action that returns the state it receives"""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def __call__(self, state: State | None = None) -> State:
+        return State(state)
 
 
 class Default(Action):
@@ -468,6 +485,9 @@ class MetaState(type):
             return self.__eq__(other())
 
         return NotImplemented
+
+    def __hash__(cls) -> int:
+        return hash((cls.__module__, cls.__name__))
 
 
 class State(metaclass=MetaState):
@@ -631,6 +651,11 @@ class State(metaclass=MetaState):
                 for k, v in visible_items.items()
             ]
         ) + '\n>'
+
+    def __rich_repr__(self) -> Generator[Any, None, None]:
+        for k, v in self.__dict__.items():
+            if not k.startswith('_'):
+                yield k, v
 
 
 class StateProtocol(Protocol):

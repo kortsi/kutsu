@@ -1,6 +1,7 @@
 """Expressions"""
 from __future__ import annotations
 
+import os
 import re
 from string import Template
 from typing import Any
@@ -132,6 +133,7 @@ def reveal_data(data: Any, mask_secrets: bool = False) -> Any:
     return data
 
 
+# TODO: rename to "evaluate"
 def subst_data(data: Any, state: State, mask_secrets: bool = False) -> Any:
     """Substitute template variable in data structure using state"""
     a = _subst_data(data, state)
@@ -237,11 +239,14 @@ class MetaNode(type):
     """Node type"""
 
     def __repr__(cls) -> str:
-        return f'Node<{cls.__name__}>'
+        return cls.__name__
 
 
 class Node(metaclass=MetaNode):
     """Base class for all expression nodes"""
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}()'
 
     def __call__(self, state: 'State') -> Any:
         raise NotImplementedError(f'You must subclass {self.__class__.__name__}')
@@ -328,7 +333,13 @@ class MetaUnaryNode(MetaNode):
     """UnaryNode type"""
 
     def __repr__(cls) -> str:
-        return f'UnaryNode<{cls.__name__}>'
+        return cls.__name__
+
+
+# TODO: make generic
+# class UnaryNode(Node, Generic[T], metaclass=MetaUnaryNode):
+#    def __init__(self, arg0: T) -> None:
+#        self.arg0 = arg0
 
 
 class UnaryNode(Node, metaclass=MetaUnaryNode):  # pylint: disable=abstract-method
@@ -340,12 +351,15 @@ class UnaryNode(Node, metaclass=MetaUnaryNode):  # pylint: disable=abstract-meth
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({repr(self.arg0)})"
 
+    # def __rich_repr__(self) -> Generator[str, None, None]:
+    #     yield self.arg0
+
 
 class MetaBinaryNode(MetaNode):
     """BinaryNode type"""
 
     def __repr__(cls) -> str:
-        return f'BinaryNode<{cls.__name__}>'
+        return cls.__name__
 
 
 class BinaryNode(Node, metaclass=MetaBinaryNode):  # pylint: disable=abstract-method
@@ -358,12 +372,16 @@ class BinaryNode(Node, metaclass=MetaBinaryNode):  # pylint: disable=abstract-me
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({repr(self.arg0)}, {repr(self.arg1)})"
 
+    # def __rich_repr__(self) -> Generator[str, None, None]:
+    #     yield self.arg0
+    #     yield self.arg1
+
 
 class MetaTernaryNode(MetaNode):
     """TernaryNode type"""
 
     def __repr__(cls) -> str:
-        return f'TernaryNode<{cls.__name__}>'
+        return cls.__name__
 
 
 class TernaryNode(Node, metaclass=MetaTernaryNode):  # pylint: disable=abstract-method
@@ -376,6 +394,11 @@ class TernaryNode(Node, metaclass=MetaTernaryNode):  # pylint: disable=abstract-
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({repr(self.arg0)}, {repr(self.arg1)}, {repr(self.arg2)})"
+
+    # def __rich_repr__(self) -> Generator[str, None, None]:
+    #     yield self.arg0
+    #     yield self.arg1
+    #     yield self.arg2
 
 
 class UnaryBoolNode(UnaryNode):
@@ -467,6 +490,9 @@ class Not(UnaryBoolNode):
         return not value
 
 
+# TODO: IsEmpty, IsNotEmpty
+
+
 class BinaryBoolNode(BinaryNode):
     """Binary boolean expression"""
 
@@ -484,12 +510,18 @@ class Eq(BinaryBoolNode):
     def eval(self, value1: Any, value2: Any) -> bool:
         return bool(value1 == value2)
 
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} == {repr(self.arg1)})'
+
 
 class Ne(BinaryBoolNode):
     """arg0 != arg1"""
 
     def eval(self, value1: Any, value2: Any) -> bool:
         return bool(value1 != value2)
+
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} != {repr(self.arg1)})'
 
 
 class Gt(BinaryBoolNode):
@@ -498,12 +530,18 @@ class Gt(BinaryBoolNode):
     def eval(self, value1: Any, value2: Any) -> bool:
         return bool(value1 > value2)
 
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} > {repr(self.arg1)})'
+
 
 class Gte(BinaryBoolNode):
     """arg0 >= arg1"""
 
     def eval(self, value1: Any, value2: Any) -> bool:
         return bool(value1 >= value2)
+
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} >= {repr(self.arg1)})'
 
 
 class Lt(BinaryBoolNode):
@@ -512,12 +550,18 @@ class Lt(BinaryBoolNode):
     def eval(self, value1: Any, value2: Any) -> bool:
         return bool(value1 < value2)
 
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} < {repr(self.arg1)})'
+
 
 class Lte(BinaryBoolNode):
     """arg0 <= arg1"""
 
     def eval(self, value1: Any, value2: Any) -> bool:
         return bool(value1 <= value2)
+
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} <= {repr(self.arg1)})'
 
 
 class In(BinaryBoolNode):
@@ -532,6 +576,9 @@ class NotIn(BinaryBoolNode):
 
     def eval(self, value1: Any, value2: Any) -> bool:
         return bool(value1 not in value2)
+
+
+# TODO: Is, IsNot, Any, All
 
 
 class BinaryAlgebraNode(BinaryNode):
@@ -564,12 +611,18 @@ class Add(BinaryAlgebraNode):
     def eval(self, value1: Any, value2: Any) -> Any:
         return value1 + value2
 
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} + {repr(self.arg1)})'
+
 
 class Sub(BinaryAlgebraNode):
     """arg0 - arg1"""
 
     def eval(self, value1: Any, value2: Any) -> Any:
         return value1 - value2
+
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} - {repr(self.arg1)})'
 
 
 class Mul(BinaryAlgebraNode):
@@ -578,12 +631,18 @@ class Mul(BinaryAlgebraNode):
     def eval(self, value1: Any, value2: Any) -> Any:
         return value1 * value2
 
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} * {repr(self.arg1)})'
+
 
 class Div(BinaryAlgebraNode):
     """arg0 / arg1"""
 
     def eval(self, value1: Any, value2: Any) -> Any:
         return value1 / value2
+
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} / {repr(self.arg1)})'
 
 
 class FloorDiv(BinaryAlgebraNode):
@@ -592,6 +651,9 @@ class FloorDiv(BinaryAlgebraNode):
     def eval(self, value1: Any, value2: Any) -> Any:
         return value1 // value2
 
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} // {repr(self.arg1)})'
+
 
 class Mod(BinaryAlgebraNode):
     """arg0 % arg1"""
@@ -599,12 +661,18 @@ class Mod(BinaryAlgebraNode):
     def eval(self, value1: Any, value2: Any) -> Any:
         return value1 % value2
 
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} % {repr(self.arg1)})'
+
 
 class Pow(BinaryAlgebraNode):
     """arg0 ** arg1"""
 
     def eval(self, value1: Any, value2: Any) -> Any:
         return value1**value2
+
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} ** {repr(self.arg1)})'
 
 
 class Del(Node):
@@ -638,11 +706,19 @@ class Var(UnaryNode):
 
     # TODO: This does not work well, investigate why
     # TODO: I think it could be made to work when restricted to State only
+    # TODO: Check __getattribute__
     # def __getattr__(self, name: str) -> Any:
     #     return GetAttr(self, name)
 
     def __getitem__(self, name: Any) -> Any:
         return GetItem(self, name)
+
+
+class Env(UnaryNode):
+    """Get variable arg0 from the environment. No evaluation is done."""
+
+    def __call__(self, state: State) -> str | None:
+        return os.getenv(self.arg0)
 
 
 class GetItem(BinaryNode):
@@ -663,6 +739,9 @@ class GetItem(BinaryNode):
     def __getitem__(self, name: Any) -> Any:
         return GetItem(self, name)
 
+    def __repr__(self) -> str:
+        return f'{repr(self.arg0)}[{repr(self.arg1)}]'
+
 
 class GetAttr(BinaryNode):
     """Attribute get operation"""
@@ -682,6 +761,9 @@ class GetAttr(BinaryNode):
     def __getitem__(self, name: Any) -> Any:
         return GetItem(self, name)
 
+    def __repr__(self) -> str:
+        return f'{repr(self.arg0)}.{repr(self.arg1)}'
+
 
 class Secret(Var):
     """Get variable arg0 from state and evaluate it
@@ -690,7 +772,7 @@ class Secret(Var):
 
     # TODO: I think it is wrong to subclass from Var?
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(*)"
+        return f"{self.__class__.__name__}(****)"
 
     @property
     def value(self) -> Any:
@@ -794,6 +876,9 @@ class Or(BinaryNode):
 
         return _subst_data(result, state)
 
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} | {repr(self.arg1)})'
+
 
 class And(BinaryNode):
     """arg1 if arg0 is truthy else None"""
@@ -806,26 +891,29 @@ class And(BinaryNode):
 
         return _subst_data(result, state)
 
-
-class VarOr(BinaryNode):
-    """Var(arg0) if Var(arg0) is truthy else arg1"""
-
-    def __call__(self, state: 'State') -> Any:
-        if subst_data(IsTruthy(Var(self.arg0)), state):
-            result = Var(self.arg0)
-        else:
-            result = self.arg1
-
-        return _subst_data(result, state)
+    def __repr__(self) -> str:
+        return f'({repr(self.arg0)} & {repr(self.arg1)})'
 
 
-class VarAnd(BinaryNode):
-    """arg1 if Var(arg0) is truthy else None"""
-
-    def __call__(self, state: 'State') -> Any:
-        if subst_data(IsTruthy(Var(self.arg0)), state):
-            result = self.arg1
-        else:
-            result = None
-
-        return _subst_data(result, state)
+# class VarOr(BinaryNode):
+#     """Var(arg0) if Var(arg0) is truthy else arg1"""
+#
+#     def __call__(self, state: 'State') -> Any:
+#         if subst_data(IsTruthy(Var(self.arg0)), state):
+#             result = Var(self.arg0)
+#         else:
+#             result = self.arg1
+#
+#         return _subst_data(result, state)
+#
+#
+# class VarAnd(BinaryNode):
+#     """arg1 if Var(arg0) is truthy else None"""
+#
+#     def __call__(self, state: 'State') -> Any:
+#         if subst_data(IsTruthy(Var(self.arg0)), state):
+#             result = self.arg1
+#         else:
+#             result = None
+#
+#         return _subst_data(result, state)
