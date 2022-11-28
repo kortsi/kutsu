@@ -1,5 +1,6 @@
 """HTTP Requests"""
 from __future__ import annotations
+import logging
 
 import base64
 from typing import IO, Any, Generator
@@ -10,6 +11,8 @@ from .expressions import Node, subst_data
 from .state import Action, AsyncAction, State
 
 Json = dict[str, 'Json'] | list['Json'] | str | int | float | bool | None
+
+log = logging.getLogger(__name__)
 
 
 class HttpRequest:
@@ -249,6 +252,7 @@ class HttpRequest:
             stream=self._prepare_stream(s),
             cookies=self._prepare_cookies(s),
         )
+        log.debug(self.request)
         return self.request
 
     def _prepare_method(self, state: State) -> str:
@@ -382,6 +386,8 @@ class HttpRequest:
 
     def _process_response(self, state: State, response: Response) -> State:
         self.response = response
+        log.debug(self.response)
+        log.debug(self.response.json())
         if self.raise_error:
             response.raise_for_status()
         if self.save_cookies_to:
