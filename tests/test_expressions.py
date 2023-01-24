@@ -29,6 +29,7 @@ from kutsu.expressions import (
     Json,
     Lt,
     Lte,
+    Masked,
     Mod,
     Mul,
     Ne,
@@ -41,8 +42,7 @@ from kutsu.expressions import (
     Select,
     Sub,
     Var,
-    subst_data,
-    subst_str,
+    evaluate,
 )
 from kutsu.state import State
 
@@ -51,8 +51,8 @@ from .generate_tests import pytest_generate_tests
 
 class TestSubstData:
 
-    def test_subst_data(self, arg0, state, output):
-        assert subst_data(arg0, state) == output
+    def test_evaluate(self, arg0, state, output):
+        assert evaluate(arg0, state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -75,8 +75,8 @@ class TestSubstData:
 
 class TestState:
 
-    def test_subst_data(self, arg0, state, output):
-        assert subst_data(arg0, state) == output
+    def test_evaluate(self, arg0, state, output):
+        assert evaluate(arg0, state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -110,8 +110,8 @@ class TestState:
 
 class TestUnaryBool:
 
-    def test_subst_data(self, arg0, function, state, output):
-        assert subst_data(function(arg0), state) == output
+    def test_evaluate(self, arg0, function, state, output):
+        assert evaluate(function(arg0), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -168,8 +168,8 @@ class TestUnaryBool:
 
 class TestEqual:
 
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
+    def test_evaluate(self, arg0, arg1, function, state, output):
+        assert evaluate(function(arg0, arg1), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -191,8 +191,8 @@ class TestEqual:
 
 class TestNotEqual:
 
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
+    def test_evaluate(self, arg0, arg1, function, state, output):
+        assert evaluate(function(arg0, arg1), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -214,8 +214,8 @@ class TestNotEqual:
 
 class TestEqualVar:
 
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
+    def test_evaluate(self, arg0, arg1, function, state, output):
+        assert evaluate(function(arg0, arg1), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -239,8 +239,8 @@ class TestEqualVar:
 
 class TestNotEqualVar:
 
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
+    def test_evaluate(self, arg0, arg1, function, state, output):
+        assert evaluate(function(arg0, arg1), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -264,8 +264,8 @@ class TestNotEqualVar:
 
 class TestComparison:
 
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
+    def test_evaluate(self, arg0, arg1, function, state, output):
+        assert evaluate(function(arg0, arg1), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -302,8 +302,8 @@ class TestComparisonOperator:
     def test_type(self, arg0, type_, state, output):
         assert isinstance(arg0, type_)
 
-    def test_subst_data(self, arg0, type_, state, output):
-        assert subst_data(arg0, state) == output
+    def test_evaluate(self, arg0, type_, state, output):
+        assert evaluate(arg0, state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -382,8 +382,8 @@ class TestComparisonOperator:
 
 class TestContaining:
 
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
+    def test_evaluate(self, arg0, arg1, function, state, output):
+        assert evaluate(function(arg0, arg1), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -409,8 +409,8 @@ class TestContaining:
 
 class TestAlgebra:
 
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
+    def test_evaluate(self, arg0, arg1, function, state, output):
+        assert evaluate(function(arg0, arg1), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -470,8 +470,8 @@ class TestAlgebraOperator:
     def test_type(self, arg0, type_, state, output):
         assert isinstance(arg0, type_)
 
-    def test_subst_data(self, arg0, type_, state, output):
-        assert subst_data(arg0, state) == output
+    def test_evaluate(self, arg0, type_, state, output):
+        assert evaluate(arg0, state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -543,8 +543,8 @@ class TestAlgebraOperator:
 
 class TestVarSubst:
 
-    def test_subst_data(self, arg0, function, state, output):
-        assert subst_data(function(arg0), state) == output
+    def test_evaluate(self, arg0, function, state, output):
+        assert evaluate(function(arg0), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -568,11 +568,11 @@ class TestVarSubst:
 
 class TestStrSubst:
 
-    def test_subst_data(self, arg0, state, output):
-        assert subst_data(arg0, state) == output
+    def test_evaluate(self, arg0, state, output):
+        assert evaluate(arg0, state) == output
 
     def test_subst_str(self, arg0, state, output):
-        assert subst_str(arg0, state) == output
+        assert evaluate(arg0, state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -596,62 +596,310 @@ class TestStrSubst:
 def test_getitem():
     state = State(l=[1, 2, 3], ll=[[4, 5], [6]])
 
-    assert subst_data(GetItem(Var('l'), 0), state) == 1
-    assert subst_data(GetItem(Var('l'), 1), state) == 2
-    assert subst_data(GetItem(Var('l'), 2), state) == 3
+    assert evaluate(GetItem(Var('l'), 0), state) == 1
+    assert evaluate(GetItem(Var('l'), 1), state) == 2
+    assert evaluate(GetItem(Var('l'), 2), state) == 3
 
-    assert subst_data(Var('l')[0], state) == 1
-    assert subst_data(Var('l')[1], state) == 2
-    assert subst_data(Var('l')[2], state) == 3
+    assert evaluate(Var('l')[0], state) == 1
+    assert evaluate(Var('l')[1], state) == 2
+    assert evaluate(Var('l')[2], state) == 3
 
-    assert subst_data(Var('ll')[0][0], state) == 4
-    assert subst_data(Var('ll')[0][1], state) == 5
-    assert subst_data(Var('ll')[1][0], state) == 6
+    assert evaluate(Var('ll')[0][0], state) == 4
+    assert evaluate(Var('ll')[0][1], state) == 5
+    assert evaluate(Var('ll')[1][0], state) == 6
 
 
 # def test_getattr():
 #     state = State(s=State(a='A', b='B'), ss=State(sss=State(c='C')))
 #
-#     assert subst_data(GetAttr(Var('s'), 'a'), state) == 'A'
-#     assert subst_data(GetAttr(Var('s'), 'b'), state) == 'B'
+#     assert evaluate(GetAttr(Var('s'), 'a'), state) == 'A'
+#     assert evaluate(GetAttr(Var('s'), 'b'), state) == 'B'
 #
-#     assert subst_data(Var('s').a, state) == 'A'
-#     assert subst_data(Var('s').b, state) == 'B'
+#     assert evaluate(Var('s').a, state) == 'A'
+#     assert evaluate(Var('s').b, state) == 'B'
 #
-#     assert subst_data(Var('ss').sss.c, state) == 'C'
+#     assert evaluate(Var('ss').sss.c, state) == 'C'
 
 
 def test_secret():
     state = State(secret=Secret('secret_value'))
 
-    assert subst_data(Var('secret'), state, mask_secrets=False) == 'secret_value'
-    assert 'secret_value' not in subst_data(Var('secret'), state, mask_secrets=True)
-    assert 'secret_value' in subst_data('a ${secret}', state, mask_secrets=False)
-    assert 'secret_value' not in subst_data('a ${secret}', state, mask_secrets=True)
-    assert 'secret_value' in subst_str('a ${secret}', state, mask_secrets=False)
-    assert 'secret_value' not in subst_str('a ${secret}', state, mask_secrets=True)
+    assert evaluate(Var('secret'), state, mask_secrets=False) == 'secret_value'
+    assert isinstance(evaluate(Var('secret'), state, mask_secrets=True), Masked)
+    assert 'secret_value' in evaluate('a ${secret}', state, mask_secrets=False)
+    assert 'secret_value' not in evaluate('a ${secret}', state, mask_secrets=True)
+    assert 'secret_value' in evaluate('a ${secret}', state, mask_secrets=False)
+    assert 'secret_value' not in evaluate('a ${secret}', state, mask_secrets=True)
 
 
 def test_secret_add():
     state = State(secret=Secret('secret_value'))
 
-    assert 'secret_value' not in subst_data(
-        Add(Var('secret'), ''), state, mask_secrets=True
-    )
+    assert isinstance(evaluate(Add(Var('secret'), ''), state, mask_secrets=True), Masked)
 
 
 def test_secret_mul():
     state = State(secret=Secret('secret_value'))
 
-    assert 'secret_value' not in subst_data(
-        Mul(Var('secret'), 2), state, mask_secrets=True
-    )
+    assert isinstance(evaluate(Mul(Var('secret'), 2), state, mask_secrets=True), Masked)
+
+
+class TestSecrets:
+
+    def test_evaluate(self, arg0, state, output, masked):
+        assert evaluate(arg0, state) == output
+
+    def test_mask_secrets(self, arg0, state, output, masked):
+        assert evaluate(arg0, state, mask_secrets=True) == masked
+
+    test_scenarios = {
+        'DEFAULTS': {},
+        'SecretValueInt': {
+            'state': State(),
+            'arg0': [
+                Secret(1),
+                Secret(1) + 1,
+                Secret(1) - 1,
+                2 * Secret(2),
+                Secret(2) / 2,
+                Secret(2) % 2,
+                Secret(2) // 2,
+                Secret(2)**8,
+            ],
+            'output': [1, 2, 0, 4, 1, 0, 1, 256],
+            'masked': [
+                Masked(int),
+                Masked(int),
+                Masked(int),
+                Masked(int),
+                Masked(float),
+                Masked(int),
+                Masked(int),
+                Masked(int),
+            ],
+            'IDS': [
+                'plain',
+                'add',
+                'sub',
+                'mul',
+                'div',
+                'mod',
+                'floordiv',
+                'pow',
+            ],
+        },
+        'SecretValueStr': {
+            'state': State(),
+            'arg0': [
+                Secret('a'),
+                Secret('a') + 'x',
+                Secret('a') * 10,
+            ],
+            'output': [
+                'a',
+                'ax',
+                'aaaaaaaaaa',
+            ],
+            'masked': [
+                Masked(str),
+                Masked(str),
+                Masked(str),
+            ],
+            'IDS': [
+                'plain',
+                'concat',
+                'repeat',
+            ],
+        },
+        'SecretValueBool': {
+            'state': State(),
+            'arg0': [
+                Secret(True),
+                Secret(True) | False,
+                Secret(True) & True,
+                Secret(1) == 1,
+                2 != Secret(1),
+                Secret(1) < 2,
+                Secret(1) <= 1,
+                2 > Secret(1),
+                2 >= Secret(1),
+                In(Secret(1), [1, 2]),
+                NotIn(Secret(1), [2, 3]),
+            ],
+            'output': [
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+                True,
+            ],
+            'masked': [
+                Masked(bool),
+                Masked(bool),
+                Masked(bool),
+                Masked(bool),
+                Masked(bool),
+                Masked(bool),
+                Masked(bool),
+                Masked(bool),
+                Masked(bool),
+                Masked(bool),
+                Masked(bool)
+            ],
+            'IDS': [
+                'plain',
+                'or',
+                'and',
+                'eq',
+                'neq',
+                'lt',
+                'lte',
+                'gt',
+                'gte',
+                'in',
+                'notin',
+            ],
+        },
+        'SecretVar': {
+            'state': State(a=Secret(1), b=Secret('b')),
+            'arg0': [Var('a'), Var('b')],
+            'output': [1, 'b'],
+            'masked': [Masked(int), Masked(str)],
+            'IDS': ['int', 'str'],
+        },
+        'SecretStr': {
+            'state': State(a=Secret(1), b=Secret('b')),
+            'arg0': ['${a}', '${b}'],
+            'output': ['1', 'b'],
+            'masked': ['****MASKED****', '****MASKED****'],
+            'IDS': ['int', 'str'],
+        },
+        'SecretDictValue': {
+            'state': State(),
+            'arg0': {
+                'x': Secret('x')
+            },
+            'output': {
+                'x': 'x'
+            },
+            'masked': {
+                'x': Masked(str)
+            },
+        },
+        'SecretDictVar': {
+            'state': State(a=Secret(1), b=Secret('b')),
+            'arg0': {
+                'a': Var('a'),
+                'b': Var('b')
+            },
+            'output': {
+                'a': 1,
+                'b': 'b'
+            },
+            'masked': {
+                'a': Masked(int),
+                'b': Masked(str)
+            },
+        },
+        'SecretDictStr': {
+            'state': State(a=Secret(1), b=Secret('b')),
+            'arg0': {
+                'a': '${a}',
+                'b': '${b}'
+            },
+            'output': {
+                'a': '1',
+                'b': 'b'
+            },
+            'masked': {
+                'a': '****MASKED****',
+                'b': '****MASKED****'
+            },
+        },
+        'SecretGetItem': {
+            'state': State(
+                a={'x': Secret(1)},
+                b=[Secret('b')],
+            ),
+            'arg0': {
+                'a': Var('a')['x'],
+                'b': Var('b')[0],
+            },
+            'output': {
+                'a': 1,
+                'b': 'b',
+            },
+            'masked': {
+                'a': Masked(int),
+                'b': Masked(str),
+            },
+        },
+        'SecretIf': {
+            'state': State(
+                a=Secret(True),
+                b=Secret('X'),
+                c=Secret('Y'),
+            ),
+            'arg0': {
+                'a': If(Var('a'), Var('b'), Var('c')),
+                'b': If(Not(Var('a')), Var('c'), Var('b')),
+            },
+            'output': {
+                'a': 'X',
+                'b': 'X',
+            },
+            'masked': {
+                'a': Masked(str),
+                'b': Masked(str),
+            },
+        },
+        'SecretSelect': {
+            'state': State(
+                a=Secret('a'),
+                b=Secret('b'),
+                c=Secret('c'),
+                x=Secret('X'),
+                y=Secret('Y'),
+                z=Secret('Z'),
+            ),
+            'arg0': {
+                'a': Select(Var('a'), {
+                    'a': Var('x'),
+                    'b': Var('y')
+                }, Var('z')),
+                'b': Select(Var('b'), {
+                    'a': Var('x'),
+                    'b': Var('y')
+                }, Var('z')),
+                'c': Select(Var('c'), {
+                    'a': Var('x'),
+                    'b': Var('y')
+                }, Var('z')),
+            },
+            'output': {
+                'a': 'X',
+                'b': 'Y',
+                'c': 'Z',
+            },
+            'masked': {
+                'a': Masked(str),
+                'b': Masked(str),
+                'c': Masked(str),
+            },
+        },
+    }
 
 
 class TestLogical:
 
-    def test_subst_data(self, arg0, arg1, function, state, output):
-        assert subst_data(function(arg0, arg1), state) == output
+    def test_evaluate(self, arg0, arg1, function, state, output):
+        assert evaluate(function(arg0, arg1), state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -664,7 +912,7 @@ class TestLogical:
         },
         'And': {
             'function': And,
-            'output': [1, None, 1, None, None]
+            'output': [1, False, 1, '', None]
         },
         'Or': {
             'function': Or,
@@ -678,8 +926,8 @@ class TestLogicalOperator:
     def test_type(self, arg0, type_, state, output):
         assert isinstance(arg0, type_)
 
-    def test_subst_data(self, arg0, type_, state, output):
-        assert subst_data(arg0, state) == output
+    def test_evaluate(self, arg0, type_, state, output):
+        assert evaluate(arg0, state) == output
 
     test_scenarios = {
         'DEFAULTS': {
@@ -697,7 +945,7 @@ class TestLogicalOperator:
                 True & Var('c'),
                 False & Var('c'),
             ],
-            'output': ['c', None, 'yes', None, 'yes', None, 'c', None],
+            'output': ['c', False, 'yes', False, 'yes', '', 'c', False],
         },
         'Or': {
             'type_': Or,
@@ -719,53 +967,53 @@ class TestLogicalOperator:
 def test_del_if_none():
     state = State(this_is_none=None, not_none='not None')
 
-    assert isinstance(subst_data(DelIfNone(Var('this_is_none')), state), Del)
-    assert subst_data(DelIfNone(Var('not_none')), state) == 'not None'
+    assert isinstance(evaluate(DelIfNone(Var('this_is_none')), state), Del)
+    assert evaluate(DelIfNone(Var('not_none')), state) == 'not None'
 
 
 def test_del_if_none_operator():
     node = ~Var('x')
     assert isinstance(node, DelIfNone)
-    assert isinstance(subst_data(node, State()), Del)
-    assert subst_data(node, State(x=4)) == 4
+    assert isinstance(evaluate(node, State()), Del)
+    assert evaluate(node, State(x=4)) == 4
 
 
 def test_del():
-    assert subst_data({'a': Del()}, State()) == {}
-    assert subst_data({'a': Del(), 'b': 'keep'}, State()) == {'b': 'keep'}
-    assert subst_data([Del()], State()) == []
-    assert subst_data(['a', Del(), 'b'], State()) == ['a', 'b']
+    assert evaluate({'a': Del()}, State()) == {}
+    assert evaluate({'a': Del(), 'b': 'keep'}, State()) == {'b': 'keep'}
+    assert evaluate([Del()], State()) == []
+    assert evaluate(['a', Del(), 'b'], State()) == ['a', 'b']
 
 
 def test_json():
-    assert subst_data(Json({'a': (1, 2, 3)}), State()) == {'a': [1, 2, 3]}
-    assert subst_data(Json({'a': {1, 2, 3}}), State()) == {'a': [1, 2, 3]}
+    assert evaluate(Json({'a': (1, 2, 3)}), State()) == {'a': [1, 2, 3]}
+    assert evaluate(Json({'a': {1, 2, 3}}), State()) == {'a': [1, 2, 3]}
 
 
 def test_raise():
     with pytest.raises(RuntimeError):
-        subst_data(Raise('Error'), State())
+        evaluate(Raise('Error'), State())
 
 
 def test_if():
     state = State(A=True, B=1, C='yes', a=False, b=0)
-    assert subst_data(If('A', 1, 2), state) == 1
-    assert subst_data(If('a', 1, 2), state) == 2
-    assert subst_data(If(Var('A'), 1, 2), state) == 1
-    assert subst_data(If(Var('a'), 1, 2), state) == 2
-    assert subst_data(If(Gt(Var('B'), 0), 1, 2), state) == 1
-    assert subst_data(If(Gt(Var('b'), 0), 1, 2), state) == 2
-    assert subst_data(If('A', Var('C'), Var('b')), state) == 'yes'
-    assert subst_data(If('a', Var('C'), Var('b')), state) == 0
+    assert evaluate(If('A', 1, 2), state) == 1
+    assert evaluate(If('a', 1, 2), state) == 2
+    assert evaluate(If(Var('A'), 1, 2), state) == 1
+    assert evaluate(If(Var('a'), 1, 2), state) == 2
+    assert evaluate(If(Gt(Var('B'), 0), 1, 2), state) == 1
+    assert evaluate(If(Gt(Var('b'), 0), 1, 2), state) == 2
+    assert evaluate(If('A', Var('C'), Var('b')), state) == 'yes'
+    assert evaluate(If('a', Var('C'), Var('b')), state) == 0
 
 
 def test_select():
     state = State(B=1, C='yes', b=0, e=None)
     selections = {1: 'one', 'yes': 'positive', 0: 'zero'}
-    assert subst_data(Select('B', selections, 'default'), state) == 'one'
-    assert subst_data(Select('C', selections, 'default'), state) == 'positive'
-    assert subst_data(Select('b', selections, 'default'), state) == 'zero'
-    assert subst_data(Select('e', selections, 'default'), state) == 'default'
-    assert subst_data(Select('missing', selections, 'default'), state) == 'default'
+    assert evaluate(Select('B', selections, 'default'), state) == 'one'
+    assert evaluate(Select('C', selections, 'default'), state) == 'positive'
+    assert evaluate(Select('b', selections, 'default'), state) == 'zero'
+    assert evaluate(Select('e', selections, 'default'), state) == 'default'
+    assert evaluate(Select('missing', selections, 'default'), state) == 'default'
     # selections[True] will for some reason find key 1
     # selections[False] will for some reason find key 0

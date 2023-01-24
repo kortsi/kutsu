@@ -1,14 +1,14 @@
 """HTTP Requests"""
 from __future__ import annotations
-import logging
 
 import base64
+import logging
 from typing import IO, Any, Generator
 
 from httpx import AsyncByteStream, AsyncClient, Client, Cookies, Request, Response
 
-from .expressions import Node, subst_data
-from .state import Action, AsyncAction, State
+from .expressions import Node, evaluate
+from .state import Action, AsyncAction, State, StateArg
 
 Json = dict[str, 'Json'] | list['Json'] | str | int | float | bool | None
 
@@ -252,17 +252,18 @@ class HttpRequest:
             stream=self._prepare_stream(s),
             cookies=self._prepare_cookies(s),
         )
+        # FIXME: mask_secrets
         log.debug(self.request)
         return self.request
 
     def _prepare_method(self, state: State) -> str:
-        return str(subst_data(self.method, state))
+        return str(evaluate(self.method, state))
 
     def _prepare_url(self, state: State) -> str:
-        return str(subst_data(self.url, state))
+        return str(evaluate(self.url, state))
 
     def _prepare_params(self, state: State) -> dict[str, str] | None:
-        params = subst_data(self.params, state)
+        params = evaluate(self.params, state)
         if params is None:
             return None
         if not isinstance(params, dict):
@@ -270,16 +271,16 @@ class HttpRequest:
         return params
 
     def _prepare_authorization_header(self, state: State) -> str | None:
-        authorization = subst_data(self.authorization, state)
+        authorization = evaluate(self.authorization, state)
         if authorization is not None:
             if not isinstance(authorization, str):
                 raise TypeError(f'authorization must be a str, not {type(authorization)}')
             return authorization
 
-        scheme = subst_data(self.auth_scheme, state)
-        token = subst_data(self.auth_token, state)
-        username = subst_data(self.auth_username, state)
-        password = subst_data(self.auth_password, state)
+        scheme = evaluate(self.auth_scheme, state)
+        token = evaluate(self.auth_token, state)
+        username = evaluate(self.auth_username, state)
+        password = evaluate(self.auth_password, state)
 
         if token is None and None not in (username, password):
             if scheme is None:
@@ -295,7 +296,7 @@ class HttpRequest:
         return None
 
     def _prepare_headers(self, state: State) -> dict[str, str] | None:
-        headers = subst_data(self.headers or {}, state)
+        headers = evaluate(self.headers or {}, state)
         if not isinstance(headers, dict):
             raise TypeError(f'headers must be a dict, not {type(headers)}')
         if self.content_type is not None:
@@ -311,7 +312,7 @@ class HttpRequest:
         return headers
 
     def _prepare_content(self, state: State) -> str | bytes | None:
-        content = subst_data(self.content, state)
+        content = evaluate(self.content, state)
         if content is None:
             return None
         if isinstance(content, (str, bytes)):
@@ -319,7 +320,7 @@ class HttpRequest:
         raise TypeError(f'content must be a str or bytes, not {type(content)}')
 
     def _prepare_data(self, state: State) -> dict[str, str] | None:
-        data = subst_data(self.data, state)
+        data = evaluate(self.data, state)
         if data is None:
             return None
         if not isinstance(data, dict):
@@ -327,7 +328,7 @@ class HttpRequest:
         return data
 
     def _prepare_files(self, state: State) -> dict[str, bytes | IO[bytes]] | None:
-        files = subst_data(self.files, state)
+        files = evaluate(self.files, state)
         if files is None:
             return None
         if not isinstance(files, dict):
@@ -335,7 +336,7 @@ class HttpRequest:
         return files
 
     def _prepare_json(self, state: State) -> Json | None:
-        json = subst_data(self.json, state)
+        json = evaluate(self.json, state)
         if json is None:
             return None
         if isinstance(json, (dict, list, str, int, float, bool, type(None))):
@@ -345,7 +346,7 @@ class HttpRequest:
         )
 
     def _prepare_stream(self, state: State) -> AsyncByteStream | None:
-        stream = subst_data(self.stream, state)
+        stream = evaluate(self.stream, state)
         if stream is None:
             return None
         if isinstance(stream, AsyncByteStream):
@@ -362,7 +363,7 @@ class HttpRequest:
                 cookies.update(state_cookies)
 
         # Add cookies from self.cookies
-        self_cookies = subst_data(self.cookies, state)
+        self_cookies = evaluate(self.cookies, state)
         if self_cookies is not None:
             if not isinstance(cookies, (dict, Cookies)):
                 raise TypeError(f'cookies must be a dict or Cookies, not {type(cookies)}')
@@ -449,12 +450,10 @@ class SyncHttpRequest(HttpRequest, Action):
 
     def __call__(
         self,
-        state: State | dict[str, Any] | None = None,
-        /,
-        **kwargs: Any,
+        state: StateArg | None = None,
     ) -> State:
         state = super().__call__(State(state))
-        request = self._prepare_call(state, **kwargs)
+        request = self._prepare_call(state)
 
         with Client() as client:
             response = client.send(request, follow_redirects=self.follow_redirects)
@@ -513,15 +512,26 @@ class AsyncHttpRequest(HttpRequest, AsyncAction):
             follow_redirects=follow_redirects,
         )
 
-    async def __call__(
-        self,
-        state: State | dict[str, Any] | None = None,
-        /,
-        **kwargs: Any,
-    ) -> State:
-        state = await super().__call__(State(state))
-        request = self._prepare_call(state, **kwargs)
+    # def __call__(
+    #     self,
+    #     state: State | dict[str, Any] | None = None,
+    #     /,
+    #     **kwargs: Any,
+    # ) -> State:
+    #     state = super().__call__(State(state))
+    #     request = self._prepare_call(state, **kwargs)
 
+    #     async with AsyncClient() as client:
+    #         response = await client.send(request, follow_redirects=self.follow_redirects)
+
+    #     return self._process_response(state, response)
+
+    async def call_async(
+        self,
+        state: StateArg | None = None,
+    ) -> State:
+        state = await super().call_async(State(state))
+        request = self._prepare_call(state)
         async with AsyncClient() as client:
             response = await client.send(request, follow_redirects=self.follow_redirects)
 

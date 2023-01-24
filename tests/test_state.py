@@ -7,11 +7,11 @@ import pytest
 from kutsu.state import (
     Action,
     AsyncAction,
-    AsyncChain,
     Chain,
     Default,
     Eval,
     Identity,
+    Override,
     Parallel,
     Slice,
     State,
@@ -87,6 +87,20 @@ def test_async_action():
     assert (s4.value == 1)
 
 
+def test_invalid_pipe():
+
+    a = Action()
+
+    with pytest.raises(TypeError):
+        () | a
+
+    with pytest.raises(TypeError):
+        '' | a
+
+    with pytest.raises(TypeError):
+        set() | a
+
+
 def test_identity():
     s = State(x=1)
     t = s | Identity
@@ -101,6 +115,16 @@ def test_default():
     assert s.a == 1
 
     s = State(a=2) | default
+    assert s.a == 2
+
+
+def test_override():
+    override = Override(a=2)
+
+    s = State() | override
+    assert s.a == 2
+
+    s = State(a=1) | override
     assert s.a == 2
 
 
@@ -175,9 +199,9 @@ async def async_transformer(state):
 )
 def test_make_async_chain(a, b):
     chain1 = a >> b
-    assert isinstance(chain1, AsyncChain)
+    assert isinstance(chain1, Chain)
     chain2 = b >> a
-    assert isinstance(chain2, AsyncChain)
+    assert isinstance(chain2, Chain)
 
 
 def test_execute_chain():
@@ -211,15 +235,15 @@ def test_execute_async_chain():
 
     class MyTestAction1(AsyncAction):
 
-        async def __call__(self, state=None):
-            state = await super().__call__(state)
+        async def call_async(self, state=None):
+            state = await super().call_async(state)
             state.result = 1
             return state
 
     class MyTestAction2(AsyncAction):
 
-        async def __call__(self, state=None):
-            state = await super().__call__(state)
+        async def call_async(self, state=None):
+            state = await super().call_async(state)
             state.result = 2
             return state
 
@@ -232,6 +256,26 @@ def test_execute_async_chain():
     assert s2.result == 2
     assert s3.result == 2
     assert s4.result == 1
+
+
+def test_override_action():
+
+    class MyTestAction1(Action):
+
+        def __call__(self, state=None):
+            state = super().__call__(state)
+            state.result = 1
+            return state
+
+    s1 = State(result=0) | MyTestAction1() >> Override(result=2)
+    s2 = State(result=0) | MyTestAction1() >> Override(State(result=2))
+    s3 = {} | MyTestAction1() >> Override(result=2)
+    s4 = {} | MyTestAction1() >> Override(State(result=2))
+
+    assert s1.result == 2
+    assert s2.result == 2
+    assert s3.result == 2
+    assert s4.result == 2
 
 
 def test_execute_action():
@@ -290,8 +334,8 @@ def test_execute_async_action():
 
     class AsyncTestAction(AsyncAction):
 
-        async def __call__(self, state=None):
-            state = await super().__call__(state)
+        async def call_async(self, state=None):
+            state = await super().call_async(state)
             state.async_result = 'x'
             return state
 
@@ -314,8 +358,8 @@ def test_nested_sync_async():
 
     class AsyncTestAction(AsyncAction):
 
-        async def __call__(self, state=None):
-            state = await super().__call__(state)
+        async def call_async(self, state=None):
+            state = await super().call_async(state)
             state.async_result = 'z'
             return state
 
@@ -336,8 +380,8 @@ def test_execute_parallel():
 
     class AsyncTestAction(AsyncAction):
 
-        async def __call__(self, state=None, /, **kwargs):
-            state = await super().__call__(state, **kwargs)
+        async def call_async(self, state=None, /, **kwargs):
+            state = await super().call_async(state, **kwargs)
             state.answer = state.INSTANCE_NUMBER
             return state
 
@@ -347,9 +391,9 @@ def test_execute_parallel():
         return state
 
     async def run_test():
-        par = AsyncTestAction**10
+        par = Parallel([AsyncTestAction] * 10, merge)
         state = State(results=[None] * 10)
-        state = await par(state, merge)
+        state = await par.call_async(state)
         return state
 
     state = asyncio.run(run_test())
@@ -360,12 +404,12 @@ def test_execute_parallel():
 def test_execute_1000_parallel():
 
     n = 1000
-    SLEEP = 0.01
+    SLEEP = 0.05
 
     class Sleeper(AsyncAction):
 
-        async def __call__(self, state=None):
-            state = await super().__call__(state)
+        async def call_async(self, state=None):
+            state = await super().call_async(state)
             await asyncio.sleep(SLEEP)
             state.results[state.INSTANCE_NUMBER] = True
             return state

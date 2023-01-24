@@ -3,237 +3,166 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Collection, Mapping
 from string import Template
 from typing import Any
 
 from .state import State
 
 
-class StringValue:
+class Masked:
+    """Masked value"""
 
-    def __init__(self, template: Template, variables: dict[str, Any]) -> None:
-        self.template = template
-        self.variables = variables
+    def __init__(self, type_: type) -> None:
+        self.type = type_
+
+    def __repr__(self) -> str:
+        return f'Masked[{self.type.__name__}]'
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, Masked) and self.type == other.type
 
 
-class SecretValue:
+class _MaskedStr(Masked):
+    """Temporary placeholder for masked strings. Stripped from output of 'evaluate'."""
 
-    def __init__(self, value: Any) -> None:
+    def __init__(self, value: str) -> None:
+        super().__init__(str)
+        self.type = str
         self.value = value
 
+    def __repr__(self) -> str:
+        return f'_MaskedStr[{repr(self.value)}]'
 
-def get_key(key: str | StringValue) -> str:
-    """Get key from str or StringValue"""
-    if isinstance(key, StringValue):
-        return reveal_str(key, mask_secrets=False)
-    return key
-
-
-def subst_str(s: str, state: State, mask_secrets: bool = False) -> str:
-    """Substitute template variables in string using state"""
-    s2 = _subst_str(s, state)
-    return reveal_str(s2, mask_secrets=mask_secrets)
-
-    # TODO: render until there are no changes
-    # tpl = Template(s)
-    # # Find out all variables requiring substitution and substitute them
-    # variable_names: List[str] = []
-    # for _, a, b, _ in re.findall(tpl.pattern, tpl.template):
-    #     # For each match a or b or neither could be non-empty, but not both
-    #     if a or b:
-    #         variable_names.append(a or b)
-
-    # variables = {}
-    # for v in variable_names:
-    #     variables[v] = subst_data(getattr(state, v, None), state,
-    #  mask_secrets=mask_secrets)
-
-    # # for _, a, b, _ in re.findall(tpl.pattern, tpl.template):
-    # #     if a or b:
-    # #         variables[a or b] = subst_data(getattr(state, a or b), state,
-    # #             mask_secrets=mask_secrets)
-
-    # return tpl.safe_substitute(**variables)
-    # # return StringValue(tpl, variables)
-    # # subst = {k: v if v is not None else '' for k, v in vars(state).items()}
-    # # return Template(s).safe_substitute(**subst)
+    def __str__(self) -> str:
+        return self.value
 
 
-def reveal_str(sv: StringValue, mask_secrets: bool = False) -> str:
-    """Render string"""
-    if isinstance(sv, str):
-        # TODO: why do we sometimes receive an str?
-        return sv
-    values = reveal_data(sv.variables, mask_secrets=mask_secrets)
-    return sv.template.safe_substitute(**values)
+def remove_masked_str(data: Any) -> Any:
+    """Remove _MaskedStr from data structure"""
 
-
-def _subst_str(s: str, state: State) -> StringValue:
-    assert isinstance(s, str)
-
-    tpl = Template(s)
-
-    # Find out all variables requiring substitution and substitute them
-    variable_names: list[str] = []
-    for _, a, b, _ in re.findall(
-        tpl.pattern,  # pylint:disable=no-member
-        tpl.template
-    ):
-        # For each match a or b or neither could be non-empty, but not both
-        if a or b:
-            variable_names.append(a or b)
-
-    variables = {}
-    for v in variable_names:
-        # variables[v] = getattr(state, v)
-        variables[v] = _subst_data(getattr(state, v, None), state)
-
-    # Replace occurrences of None with the empty string
-    # Use string "None" if you need to print "None"
-    for v in variables:  # pylint:disable=consider-using-dict-items
-        if variables[v] is None:
-            variables[v] = ''
-
-    return StringValue(tpl, variables)
-
-
-def reveal_data(data: Any, mask_secrets: bool = False) -> Any:
-    """Reveal or mask Secret() objects"""
-    if isinstance(data, SecretValue):
-        secret_value = data.value
-        if mask_secrets:
-            # print('mask Secret', secret_value)
-            masked = getattr(type(secret_value), "__name__", str(secret_value))
-            return f'*MASKED[{masked}]*'
-        # print('reveal Secret', secret_value)
-        return reveal_data(secret_value)
-
-    if isinstance(data, StringValue):
-        # print('reveal StringValue', data.template.template, data.variables)
-        return reveal_str(data, mask_secrets=mask_secrets)
+    if isinstance(data, _MaskedStr):
+        return data.value
 
     if isinstance(data, list):
-        # print('reveal list', data)
-        return [reveal_data(d, mask_secrets) for d in data]
+        return [remove_masked_str(d) for d in data]
 
     if isinstance(data, set):
-        # print('reveal set', data)
-        return {reveal_data(d, mask_secrets) for d in data}
+        return {remove_masked_str(d) for d in data}
 
     if isinstance(data, tuple):
-        # print('reveal tuple', data)
-        return (reveal_data(d, mask_secrets) for d in data)
+        return tuple(remove_masked_str(d) for d in data)
 
     if isinstance(data, dict):
-        # print('reveal dict', data)
-        return {
-            (reveal_str(k, mask_secrets)): reveal_data(v, mask_secrets)
-            for k, v in data.items()
-        }
+        return {remove_masked_str(k): remove_masked_str(v) for k, v in data.items()}
 
-    # print('reveal data', data)
     return data
 
 
-# TODO: rename to "evaluate"
-def subst_data(data: Any, state: State, mask_secrets: bool = False) -> Any:
-    """Substitute template variable in data structure using state"""
-    a = _subst_data(data, state)
-    return reveal_data(a, mask_secrets)
+def evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
+    """Evaluate data structure using state"""
+    data = _evaluate(data, state, mask_secrets=mask_secrets)
+
+    return remove_masked_str(data)
 
 
-def _subst_data(data: Any, state: State) -> Any:
-    """Substitute template variable in data structure using state"""
+def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
+    """Evaluate data structure using state"""
 
     if isinstance(data, str):
-        # print('str', data)
-        return _subst_str(data, state)
+        tpl = Template(data)
+
+        # Find out which variables are used in the template
+        variable_names: list[str] = []
+        for _, a, b, _ in re.findall(
+            tpl.pattern,
+            tpl.template,
+        ):
+            # For each match, either a or b will be None, or both of them will be None
+            if a or b:
+                variable_names.append(a or b)
+
+        variables = {}
+        for v in variable_names:
+            variables[v] = _evaluate(
+                getattr(state, v, None), state, mask_secrets=mask_secrets
+            )
+
+        masked = False
+
+        for v in variables:  # pylint: disable=consider-using-dict-items
+            if variables[v] is None:
+                # Replace occurrences of None with the empty string
+                variables[v] = ''
+            elif isinstance(variables[v], _MaskedStr):
+                variables[v] = variables[v].value
+                masked = True
+            elif isinstance(variables[v], Masked):
+                # Masked secret
+                variables[v] = '****MASKED****'
+                masked = True
+
+        string = tpl.safe_substitute(**variables)
+        if masked:
+            return _MaskedStr(string)
+
+        return string
 
     if isinstance(data, Secret):
-        # print('secret', data)
-        secret_value = _subst_data(data.arg0, state)
-        return SecretValue(secret_value)
+        secret_value = _evaluate(data.arg0, state, mask_secrets=mask_secrets)
+        if mask_secrets:
+            if isinstance(secret_value, Masked):
+                return secret_value
+            return Masked(type(secret_value))
+        return secret_value
 
     if isinstance(data, Del) or data is Del:
         # We let Del pass through because it will have to be handled
         # at the collection level
-        # print('Del', data)
         return data
 
     if isinstance(data, list):
-        # print('list', data)
         L = []
         for d in data:
-            result = _subst_data(d, state)
+            result = _evaluate(d, state, mask_secrets=mask_secrets)
             # Exclude values marked with Del()
             if not isinstance(result, Del) and result is not Del:
-                # print('keep', result)
                 L.append(result)
-            # else:
-            # print('del', result)
-
         return L
 
     if isinstance(data, set):
-        # print('set', data)
         S = set()
         for d in data:
-            result = _subst_data(d, state)
+            result = _evaluate(d, state, mask_secrets=mask_secrets)
             # Exclude values marked with Del()
             if not isinstance(result, Del) and result is not Del:
-                # print('keep', result)
                 S.add(result)
-            # else:
-            #     # print('del', result)
-
         return S
 
     if isinstance(data, tuple):
-        # print('tuple', data)
         T = []
         for d in data:
-            result = _subst_data(d, state)
-
+            result = _evaluate(d, state, mask_secrets=mask_secrets)
             # Exclude values marked with Del()
             if not isinstance(result, Del) and result is not Del:
-                # print('keep', result)
                 T.append(result)
-            # else:
-            #     # print('del', result)
-
         return tuple(T)
 
     if isinstance(data, dict):
-        # print('dict', data)
         D = {}
         for k, v in data.items():
-            result_key = _subst_data(k, state)
-            result_value = _subst_data(v, state)
-
+            result_key = _evaluate(k, state, mask_secrets=mask_secrets)
+            result_value = _evaluate(v, state, mask_secrets=mask_secrets)
             # Exclude keys marked with value Del()
             if not isinstance(result_value, Del) and result_value is not Del:
-                # print('keep', result_key, result_value)
                 D[result_key] = result_value
-            # else:
-            #     # print('del', result_key, result_value)
-
         return D
 
-    if isinstance(data, State):
-        # We do not call State because we want it to remain the same
-        # TODO: why is this? we could convert it into a dict, for instance
-        return data
+    if isinstance(data, Node):
+        return _evaluate(
+            data(state, mask_secrets=mask_secrets), state, mask_secrets=mask_secrets
+        )
 
-    if callable(data):
-        # print('callable', data, isinstance(data, Del))
-        # We call the callable giving state as the only arg
-        # Node instances work as well as functions or anything that can take
-        # a state argument and return something
-        return _subst_data(data(state), state)
-
-    # Anything else we return as is
-    # TODO: render until there are no changes
-    # print('other', data)
     return data
 
 
@@ -250,7 +179,7 @@ class Node(metaclass=MetaNode):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}()'
 
-    def __call__(self, state: 'State') -> Any:
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
         raise NotImplementedError(f'You must subclass {self.__class__.__name__}')
 
     def __eq__(self, other: Any) -> 'Node':  # type: ignore
@@ -409,8 +338,8 @@ class TernaryNode(Node, metaclass=MetaTernaryNode):  # pylint: disable=abstract-
 class UnaryBoolNode(UnaryNode):
     """Unary boolean expression"""
 
-    def __call__(self, state: State) -> bool:
-        return self.eval(subst_data(self.arg0, state))
+    def __call__(self, state: State, mask_secrets: bool = False) -> bool:
+        return self.eval(_evaluate(self.arg0, state, mask_secrets=mask_secrets))
 
     def eval(self, value: Any) -> bool:
         """Evaluate"""
@@ -501,8 +430,12 @@ class Not(UnaryBoolNode):
 class BinaryBoolNode(BinaryNode):
     """Binary boolean expression"""
 
-    def __call__(self, state: 'State') -> bool:
-        return self.eval(subst_data(self.arg0, state), subst_data(self.arg1, state))
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> bool | Masked:
+        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets)
+        if isinstance(first, Masked) or isinstance(second, Masked):
+            return Masked(bool)
+        return self.eval(first, second)
 
     def eval(self, value1: Any, value2: Any) -> bool:
         """Evaluate"""
@@ -589,19 +522,21 @@ class NotIn(BinaryBoolNode):
 class BinaryAlgebraNode(BinaryNode):
     """Binary algebra expression"""
 
-    def __call__(self, state: 'State') -> Any:
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
         # Evaluate data
-        first = subst_data(self.arg0, state)
-        second = subst_data(self.arg1, state)
-        data = _subst_data(self.eval(first, second), state)
+        first = _evaluate(self.arg0, state, mask_secrets=False)
+        second = _evaluate(self.arg1, state, mask_secrets=False)
+        data = _evaluate(self.eval(first, second), state, mask_secrets=False)
 
-        # See if it should be secret
-        first_secret = _subst_data(self.arg0, state)
-        second_secret = _subst_data(self.arg1, state)
-        if isinstance(first_secret,
-                      SecretValue) or isinstance(second_secret, SecretValue):
+        if not mask_secrets:
+            return data
+
+        # See if we must return a secret
+        first_secret = _evaluate(self.arg0, state, mask_secrets=True)
+        second_secret = _evaluate(self.arg1, state, mask_secrets=True)
+        if isinstance(first_secret, Masked) or isinstance(second_secret, Masked):
             # We should hide the result
-            return SecretValue(data)
+            return Masked(type(data))
 
         # Plain value
         return data
@@ -687,28 +622,33 @@ class Del(Node):
     def __repr__(self) -> str:
         return 'Del()'
 
-    def __call__(self, state: 'State') -> Any:
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
         return RuntimeError('Del instance should not be called')
 
 
 class DelIfNone(UnaryNode):
     """If arg0 is None then Del() else arg0"""
 
-    def __call__(self, state: 'State') -> Any:
-        result = subst_data(self.arg0, state)
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+        result = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
         return Del() if result is None else result
 
 
 class Var(UnaryNode):
     """Get variable arg0 from state and evaluate it"""
 
-    def __call__(self, state: 'State') -> Any:
-        key = get_key(_subst_data(self.arg0, state))
-        # print('key', key)
-        if not hasattr(state, key):
-            return None
+    def __call__(self, state: State, mask_secrets: bool = False) -> Any:
+        # key = get_key(_subst_data(self.arg0, state))
+        key = _evaluate(self.arg0, state)
+        value = getattr(state, key, None)
 
-        return _subst_data(state[key], state)
+        value = _evaluate(value, state, mask_secrets=mask_secrets)
+        new_value = _evaluate(value, state, mask_secrets=mask_secrets)
+        while new_value != value:
+            value = new_value
+            new_value = _evaluate(value, state, mask_secrets=mask_secrets)
+
+        return value
 
     # TODO: This does not work well, investigate why
     # TODO: I think it could be made to work when restricted to State only
@@ -723,21 +663,18 @@ class Var(UnaryNode):
 class Env(UnaryNode):
     """Get variable arg0 from the environment. No evaluation is done."""
 
-    def __call__(self, state: State) -> str | None:
+    def __call__(self, state: State, mask_secrets: bool = False) -> str | None:
         return os.getenv(self.arg0)
 
 
 class GetItem(BinaryNode):
-    """List subscription operation"""
+    """Subscription operation"""
 
-    def __call__(self, state: 'State') -> Any:
-        l = _subst_data(self.arg0, state)  # noqa
-        L = subst_data(self.arg0, state)
-        k = get_key(_subst_data(self.arg1, state))
-        v = L[k]
-        if isinstance(l, SecretValue):
-            return SecretValue(v)
-        return v
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+        obj = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+        key = _evaluate(self.arg1, state, mask_secrets=False)
+        value = obj[key]
+        return _evaluate(value, state, mask_secrets=mask_secrets)
 
     # def __getattr__(self, name: str) -> Any:
     #     return GetAttr(self, name)
@@ -752,14 +689,11 @@ class GetItem(BinaryNode):
 class GetAttr(BinaryNode):
     """Attribute get operation"""
 
-    def __call__(self, state: 'State') -> Any:
-        l = _subst_data(self.arg0, state)  # noqa
-        L = subst_data(self.arg0, state)
-        k = get_key(_subst_data(self.arg1, state))
-        v = getattr(L, k)
-        if isinstance(l, SecretValue):
-            return SecretValue(v)
-        return v
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+        obj = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+        key = _evaluate(self.arg1, state, mask_secrets=False)
+        value = getattr(obj, key)
+        return _evaluate(value, state, mask_secrets=mask_secrets)
 
     # def __getattr__(self, name: str) -> Any:
     #    return GetAttr(self, name)
@@ -771,14 +705,17 @@ class GetAttr(BinaryNode):
         return f'{repr(self.arg0)}.{repr(self.arg1)}'
 
 
-class Secret(Var):
-    """Get variable arg0 from state and evaluate it
+class Secret(UnaryNode):
+    """Make value secret
+
     This is used as a special placeholder which can be used to
     conceal the value when eg. logging"""
 
-    # TODO: I think it is wrong to subclass from Var?
+    def __call__(self, state: State, mask_secrets: bool = False) -> Any:
+        return _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(****)"
+        return f"{self.__class__.__name__}({type(self.arg0).__name__})"
 
     @property
     def value(self) -> Any:
@@ -789,7 +726,7 @@ class Secret(Var):
 class Raise(UnaryNode):
     """Raise exception"""
 
-    def __call__(self, state: 'State') -> Any:
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
         raise RuntimeError(self.arg0)
 
 
@@ -800,7 +737,7 @@ class If(TernaryNode):
         If(Gt('y', 0), 'greater than zero', 'not positive')
     """
 
-    def __call__(self, state: 'State') -> Any:
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
         if isinstance(self.arg0, str):
             # We have a variable name
             p = Var(self.arg0)
@@ -808,11 +745,10 @@ class If(TernaryNode):
             # We expect an expression of some kind
             p = self.arg0
 
-        truthy: bool = subst_data(IsTruthy(p), state)
-
+        # FIXME: this will reveal Secret(bool) value of self.arg0
+        truthy: bool = _evaluate(IsTruthy(p), state, mask_secrets=False)
         result = self.arg1 if truthy else self.arg2
-
-        return _subst_data(result, state)
+        return _evaluate(result, state, mask_secrets=mask_secrets)
 
 
 class Select(TernaryNode):
@@ -828,7 +764,7 @@ class Select(TernaryNode):
         )
     """
 
-    def __call__(self, state: 'State') -> Any:
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
         if isinstance(self.arg0, str):
             # We have a variable name
             e = Var(self.arg0)
@@ -836,35 +772,26 @@ class Select(TernaryNode):
             # We expect an expression of some kind
             e = self.arg0
 
-        # print('select e', e)
-        key = get_key(_subst_data(e, state))
-        # print('select key', key)
+        key = _evaluate(e, state, mask_secrets=False)
 
         result = self.arg1[key] if key in self.arg1 else self.arg2
 
-        return _subst_data(result, state)
+        # return _subst_data(result, state)
+        return _evaluate(result, state, mask_secrets=mask_secrets)
 
 
 class Json(UnaryNode):
     """Render json - prepare for json.dumps"""
 
-    def __call__(self, state: 'State') -> Any:
-        data = _subst_data(self.arg0, state)
-
-        # print('jsonifying', data)
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+        data = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
 
         def to_json(data: Any) -> Any:
-            if isinstance(data, list):
-                return [to_json(d) for d in data]
-
-            if isinstance(data, set):
-                return list({to_json(d) for d in data})
-
-            if isinstance(data, tuple):
-                return list((to_json(d) for d in data))
-
-            if isinstance(data, dict):
+            if isinstance(data, Mapping):
                 return {k: to_json(v) for k, v in data.items()}
+
+            if isinstance(data, Collection):
+                return [to_json(d) for d in data]
 
             return data
 
@@ -874,28 +801,28 @@ class Json(UnaryNode):
 class Or(BinaryNode):
     """arg0 if arg0 is truthy else arg1"""
 
-    def __call__(self, state: 'State') -> Any:
-        if subst_data(IsTruthy(self.arg0), state):
-            result = self.arg0
-        else:
-            result = self.arg1
-
-        return _subst_data(result, state)
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+        p = _evaluate(IsTruthy(self.arg0), state, mask_secrets=False)
+        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets)
+        if isinstance(first, Masked) or isinstance(second, Masked):
+            return Masked(bool)
+        return first if p else second
 
     def __repr__(self) -> str:
         return f'({repr(self.arg0)} | {repr(self.arg1)})'
 
 
 class And(BinaryNode):
-    """arg1 if arg0 is truthy else None"""
+    """arg1 if arg0 is truthy else arg0"""
 
-    def __call__(self, state: 'State') -> Any:
-        if subst_data(IsTruthy(self.arg0), state):
-            result = self.arg1
-        else:
-            result = None
-
-        return _subst_data(result, state)
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+        p = _evaluate(IsTruthy(self.arg0), state, mask_secrets=False)
+        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets)
+        if isinstance(first, Masked) or isinstance(second, Masked):
+            return Masked(bool)
+        return second if p else first
 
     def __repr__(self) -> str:
         return f'({repr(self.arg0)} & {repr(self.arg1)})'
@@ -904,22 +831,22 @@ class And(BinaryNode):
 # class VarOr(BinaryNode):
 #     """Var(arg0) if Var(arg0) is truthy else arg1"""
 #
-#     def __call__(self, state: 'State') -> Any:
-#         if subst_data(IsTruthy(Var(self.arg0)), state):
+#     def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+#         if _evaluate(IsTruthy(Var(self.arg0)), state, mask_secrets=False):
 #             result = Var(self.arg0)
 #         else:
 #             result = self.arg1
 #
-#         return _subst_data(result, state)
+#         return _evaluate(result, state, mask_secrets=mask_secrets)
 #
 #
 # class VarAnd(BinaryNode):
 #     """arg1 if Var(arg0) is truthy else None"""
 #
-#     def __call__(self, state: 'State') -> Any:
-#         if subst_data(IsTruthy(Var(self.arg0)), state):
+#     def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+#         if _evaluate(IsTruthy(Var(self.arg0)), state, mask_secrets=False):
 #             result = self.arg1
 #         else:
 #             result = None
 #
-#         return _subst_data(result, state)
+#         return _evaluate(result, state, mask_secrets=mask_secrets)
