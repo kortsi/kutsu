@@ -10,6 +10,7 @@ nest-asyncio = "^1.5.6"
 httpx = "^0.23.0"
 rich = "^12.6.0"
 ipython = "8.4.0"
+Pygments = "^2.14.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.2"
@@ -19,6 +20,7 @@ isort = "^5.10.1"
 mypy = "^0.991"
 yapf = "^0.32.0"
 toml = "^0.10.2"
+types-Pygments = "^2.14.0"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
@@ -53,6 +55,7 @@ disable=[
     "too-many-arguments",
     "too-many-instance-attributes",
     "too-many-lines",
+    "too-many-statements",
     "missing-module-docstring",
     "missing-class-docstring",
     "missing-function-docstring",

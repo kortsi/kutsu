@@ -49,7 +49,7 @@ from .expressions import (
     Var,
     evaluate,
 )
-from .http_request import AsyncHttpRequest, HttpRequest, SyncHttpRequest
+from .http_request import HttpRequest
 from .state import (
     Action,
     AsyncAction,
@@ -75,7 +75,6 @@ __all__ = [
     'Add',
     'And',
     'AsyncAction',
-    'AsyncHttpRequest',
     'BinaryAlgebraNode',
     'BinaryBoolNode',
     'BinaryNode',
@@ -132,7 +131,6 @@ __all__ = [
     'StateTransformerCoro',
     'StateTransformerFunc',
     'Sub',
-    'SyncHttpRequest',
     'TernaryNode',
     'UnaryBoolNode',
     'UnaryNode',

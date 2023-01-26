@@ -457,7 +457,7 @@ python-versions = ">=3.6"
 
 [[package]]
 name = "pygments"
-version = "2.13.0"
+version = "2.14.0"
 description = "Pygments is a syntax highlighting package written in Python."
 category = "main"
 optional = false
@@ -617,6 +617,37 @@ docs = ["myst-parser", "pydata-sphinx-theme", "sphinx"]
 test = ["pre-commit", "pytest"]
 
 [[package]]
+name = "types-docutils"
+version = "0.19.1.2"
+description = "Typing stubs for docutils"
+category = "dev"
+optional = false
+python-versions = "*"
+
+[[package]]
+name = "types-pygments"
+version = "2.14.0.1"
+description = "Typing stubs for Pygments"
+category = "dev"
+optional = false
+python-versions = "*"
+
+[package.dependencies]
+types-docutils = "*"
+types-setuptools = "*"
+
+[[package]]
+name = "types-setuptools"
+version = "65.7.0.3"
+description = "Typing stubs for setuptools"
+category = "dev"
+optional = false
+python-versions = "*"
+
+[package.dependencies]
+types-docutils = "*"
+
+[[package]]
 name = "typing-extensions"
 version = "4.4.0"
 description = "Backported and Experimental Type Hints for Python 3.7+"
@@ -651,7 +682,7 @@ python-versions = "*"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "35b244b648f7d9c1d677edf40f389783c72b808bfe8c1c315db008163fa503f6"
+content-hash = "c0cbfa12d76ec1ceb717799c7e1b78e35716f00ed5fa04299cf2007ea08a941b"
 
 [metadata.files]
 anyio = []
@@ -760,6 +791,9 @@ tomli = [
 ]
 tomlkit = []
 traitlets = []
+types-docutils = []
+types-pygments = []
+types-setuptools = []
 typing-extensions = []
 wcwidth = [
     {file = "wcwidth-0.2.5-py2.py3-none-any.whl", hash = "sha256:beb4802a9cebb9144e99086eff703a642a13d6a0052920003a230f3294bbe784"},

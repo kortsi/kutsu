@@ -64,7 +64,7 @@ class MetaAction(type):
 
 class Action(metaclass=MetaAction):
     """Action"""
-    _func: Callable[[State], State] | None
+    _func: Callable[[State], State] | None = None
 
     def __init__(self, func: Callable[[StateArg], State] | None = None) -> None:
         if func is not None and (isinstance(func, AsyncAction) or iscoro(func)):
@@ -74,6 +74,8 @@ class Action(metaclass=MetaAction):
     def __call__(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **__: Any,
     ) -> State:
         if self._func is not None:
             return self._func(State(state))
@@ -169,7 +171,7 @@ class MetaAsyncAction(MetaAction):
 
 class AsyncAction(Action, metaclass=MetaAsyncAction):
     """An asynchronous action"""
-    _coro: Callable[[State], Awaitable[State]] | None
+    _coro: Callable[[State], Awaitable[State]] | None = None
 
     def __init__(  # pylint: disable=super-init-not-called
         self,
@@ -209,12 +211,14 @@ class AsyncAction(Action, metaclass=MetaAsyncAction):
     def __call__(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **kwargs: Any,
     ) -> State:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             # No running loop
-            return asyncio.run(self.call_async(State(state)))
+            return asyncio.run(self.call_async(State(state), **kwargs))
 
         try:
             import nest_asyncio
@@ -230,9 +234,14 @@ class AsyncAction(Action, metaclass=MetaAsyncAction):
                 category=RuntimeWarning,
             )
 
-        return loop.run_until_complete(self.call_async(State(state)))
+        return loop.run_until_complete(self.call_async(State(state), **kwargs))
 
-    async def call_async(self, state: StateArg | None = None) -> State:
+    async def call_async(
+        self,
+        state: StateArg | None = None,
+        /,
+        **__: Any,
+    ) -> State:
         if self._coro is not None:
             return await self._coro(State(state))
         return State(state)
@@ -310,6 +319,8 @@ class Identity(Action):
     def __call__(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **__: Any,
     ) -> State:
         return State(state)
 
@@ -335,6 +346,8 @@ class Default(Action):
     def __call__(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **__: Any,
     ) -> State:
         return (State(state))(self.bound_state)
 
@@ -349,6 +362,8 @@ class Slice(Action):
     def __call__(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **__: Any,
     ) -> State:
         state = State(state)
         return State(**{k: state[k] for k in self.keys})
@@ -364,6 +379,8 @@ class Eval(Action):
     def __call__(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **__: Any,
     ) -> State:
         from .expressions import evaluate
         state = State(state)
@@ -382,6 +399,8 @@ class Override(Action):
     def __call__(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **__: Any,
     ) -> State:
         return self.bound_state(state)
 
@@ -416,6 +435,8 @@ class Chain(AsyncAction):
     def __call__(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **kwargs: Any,
     ) -> State:
         if any(isinstance(a, AsyncAction) or iscoro(a) for a in self.actions):
             # We have async actions, so we use Action.__call__ to get an ioloop
@@ -434,11 +455,11 @@ class Chain(AsyncAction):
         s = State(state)
         for action in self.actions:
             if isinstance(action, AsyncAction):
-                s = await action.call_async(s)
+                s = await action.call_async(s, **kwargs)
             elif iscoro(action):
-                s = await action(s)
+                s = await action(s, **kwargs)
             else:
-                s = action(s)
+                s = action(s, **kwargs)
         return s
 
 
