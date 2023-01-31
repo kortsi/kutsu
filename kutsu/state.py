@@ -290,7 +290,7 @@ class Parallel(AsyncAction):
     def __len__(self) -> int:
         return len(self.actions)
 
-    async def call_async(self, state: StateArg | None = None) -> State:
+    async def call_async(self, state: StateArg | None = None, /, **__: Any) -> State:
         state_ = State(state)
         queue: list[Awaitable[State]] = []
 
@@ -451,6 +451,8 @@ class Chain(AsyncAction):
     async def call_async(
         self,  # pylint:disable=unused-variable
         state: StateArg | None = None,
+        /,
+        **kwargs: Any,
     ) -> State:
         s = State(state)
         for action in self.actions:
