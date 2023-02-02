@@ -95,6 +95,7 @@ class HttpRequest(AsyncAction):
 
     _prepared_config: RequestConfig | None = None
     _prepared_data: RequestData | None = None
+    _prepared_data_masked: RequestData | None = None
 
     def __rich_repr__(self) -> Generator[Any, None, None]:
         yield 'method', self.method
@@ -334,7 +335,6 @@ class HttpRequest(AsyncAction):
         self._prepared_config = config
         self.input_state = State(state)
         s = self.input_state(State(config.defaults))
-        # TODO: create masked versions of these and use when printing
         data = RequestData(
             method=self._prepare_method(s, config),
             url=self._prepare_url(s, config),
@@ -347,19 +347,39 @@ class HttpRequest(AsyncAction):
             stream=self._prepare_stream(s, config),
             cookies=self._prepare_cookies(s, config),
         )
+        self._prepared_data_masked = RequestData(
+            method=self._prepare_method(s, config, mask_secrets=True),
+            url=self._prepare_url(s, config, mask_secrets=True),
+            params=self._prepare_params(s, config, mask_secrets=True),
+            headers=self._prepare_headers(s, config, mask_secrets=True),
+            content=self._prepare_content(s, config, mask_secrets=True),
+            data=self._prepare_data(s, config, mask_secrets=True),
+            files=self._prepare_files(s, config, mask_secrets=True),
+            json=self._prepare_json(s, config, mask_secrets=True),
+            stream=self._prepare_stream(s, config, mask_secrets=True),
+            cookies=self._prepare_cookies(s, config, mask_secrets=True),
+        )
         self._prepared_data = data
         self.request = Request(**data._asdict())
         return self.request
 
-    def _prepare_method(self, state: State, config: RequestConfig) -> str:
-        return str(evaluate(config.method, state))
+    def _prepare_method(
+        self, state: State, config: RequestConfig, mask_secrets: bool = False
+    ) -> str:
+        return str(evaluate(config.method, state, mask_secrets=mask_secrets))
 
-    def _prepare_url(self, state: State, config: RequestConfig) -> str:
-        return str(evaluate(config.url, state))
+    def _prepare_url(
+        self, state: State, config: RequestConfig, mask_secrets: bool = False
+    ) -> str:
+        return str(evaluate(config.url, state, mask_secrets=mask_secrets))
 
-    def _prepare_params(self, state: State,
-                        config: RequestConfig) -> dict[str, str] | None:
-        params = evaluate(config.params, state)
+    def _prepare_params(
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
+    ) -> dict[str, str] | None:
+        params = evaluate(config.params, state, mask_secrets=mask_secrets)
         if params is None:
             return None
         if not isinstance(params, dict):
@@ -367,18 +387,29 @@ class HttpRequest(AsyncAction):
         return params
 
     def _prepare_authorization_header(
-        self, state: State, config: RequestConfig
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
     ) -> str | None:
-        authorization = evaluate(config.authorization, state)
+        authorization = evaluate(
+            config.authorization, state, mask_secrets=mask_secrets, as_str=True
+        )
         if authorization is not None:
             if not isinstance(authorization, str):
                 raise TypeError(f'authorization must be a str, not {type(authorization)}')
             return authorization
 
-        scheme = evaluate(config.auth_scheme, state)
-        token = evaluate(config.auth_token, state)
-        username = evaluate(config.auth_username, state)
-        password = evaluate(config.auth_password, state)
+        scheme = evaluate(
+            config.auth_scheme, state, mask_secrets=mask_secrets, as_str=True
+        )
+        token = evaluate(config.auth_token, state, mask_secrets=mask_secrets, as_str=True)
+        username = evaluate(
+            config.auth_username, state, mask_secrets=mask_secrets, as_str=True
+        )
+        password = evaluate(
+            config.auth_password, state, mask_secrets=mask_secrets, as_str=True
+        )
 
         if token is None and None not in (username, password):
             if scheme is None:
@@ -393,18 +424,26 @@ class HttpRequest(AsyncAction):
 
         return None
 
-    def _prepare_headers(self, state: State,
-                         config: RequestConfig) -> dict[str, str] | None:
-        headers = evaluate(config.headers or {}, state)
+    def _prepare_headers(
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
+    ) -> dict[str, str] | None:
+        headers = evaluate(config.headers or {}, state, mask_secrets=mask_secrets)
         if not isinstance(headers, dict):
             raise TypeError(f'headers must be a dict, not {type(headers)}')
-        content_type = evaluate(config.content_type, state)
+        content_type = evaluate(
+            config.content_type, state, mask_secrets=mask_secrets, as_str=True
+        )
         if content_type is not None:
             headers['Content-Type'] = content_type
-        authorization = self._prepare_authorization_header(state, config)
+        authorization = self._prepare_authorization_header(
+            state, config, mask_secrets=mask_secrets
+        )
         if authorization is not None:
             headers['Authorization'] = authorization
-        accept = evaluate(config.accept, state)
+        accept = evaluate(config.accept, state, mask_secrets=mask_secrets, as_str=True)
         if accept is not None:
             headers['Accept'] = accept
         for k, v in headers.items():
@@ -412,33 +451,52 @@ class HttpRequest(AsyncAction):
                 headers[k] = ', '.join(v)
         return headers
 
-    def _prepare_content(self, state: State, config: RequestConfig) -> str | bytes | None:
-        content = evaluate(config.content, state)
+    def _prepare_content(
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
+    ) -> str | bytes | None:
+        content = evaluate(config.content, state, mask_secrets=mask_secrets, as_str=True)
         if content is None:
             return None
         if isinstance(content, (str, bytes)):
             return content
         raise TypeError(f'content must be a str or bytes, not {type(content)}')
 
-    def _prepare_data(self, state: State, config: RequestConfig) -> dict[str, str] | None:
-        data = evaluate(config.data, state)
+    def _prepare_data(
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
+    ) -> dict[str, str] | None:
+        data = evaluate(config.data, state, mask_secrets=mask_secrets)
         if data is None:
             return None
         if not isinstance(data, dict):
             raise TypeError(f'data must be a dict, not {type(data)}')
         return data
 
-    def _prepare_files(self, state: State,
-                       config: RequestConfig) -> dict[str, bytes | IO[bytes]] | None:
-        files = evaluate(config.files, state)
+    def _prepare_files(
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
+    ) -> dict[str, bytes | IO[bytes]] | None:
+        files = evaluate(config.files, state, mask_secrets=mask_secrets)
         if files is None:
             return None
         if not isinstance(files, dict):
             raise TypeError(f'files must be a dict, not {type(files)}')
         return files
 
-    def _prepare_json(self, state: State, config: RequestConfig) -> Json | None:
-        json = evaluate(config.json, state)
+    def _prepare_json(
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
+    ) -> Json | None:
+        json = evaluate(config.json, state, mask_secrets=mask_secrets)
         if json is None:
             return None
         if isinstance(json, (dict, list, str, int, float, bool, type(None))):
@@ -448,18 +506,28 @@ class HttpRequest(AsyncAction):
         )
 
     def _prepare_stream(
-        self, state: State, config: RequestConfig
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
     ) -> AsyncByteStream | None:
-        stream = evaluate(config.stream, state)
+        stream = evaluate(config.stream, state, mask_secrets=mask_secrets)
         if stream is None:
             return None
         if isinstance(stream, AsyncByteStream):
             return stream
         raise TypeError(f'stream must be an AsyncByteStream, not {type(stream)}')
 
-    def _prepare_cookies(self, state: State, config: RequestConfig) -> Cookies | None:
+    def _prepare_cookies(
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
+    ) -> Cookies | None:
         cookies = Cookies()
-        read_cookies_from = evaluate(config.read_cookies_from, state)
+        read_cookies_from = evaluate(
+            config.read_cookies_from, state, mask_secrets=mask_secrets, as_str=True
+        )
 
         # Read cookies from state if present
         if read_cookies_from and read_cookies_from in state:
@@ -468,7 +536,9 @@ class HttpRequest(AsyncAction):
                 cookies.update(state_cookies)
 
         # Add cookies from self.cookies
-        self_cookies = evaluate(config.cookies, state)
+        self_cookies = evaluate(
+            config.cookies, state, mask_secrets=mask_secrets, as_str=True
+        )
         if self_cookies is not None:
             if not isinstance(cookies, (dict, Cookies)):
                 raise TypeError(f'cookies must be a dict or Cookies, not {type(cookies)}')

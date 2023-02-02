@@ -59,11 +59,19 @@ def remove_masked_str(data: Any) -> Any:
     return data
 
 
-def evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
+def evaluate(
+    data: Any, state: State, mask_secrets: bool = False, as_str: bool = False
+) -> Any:
     """Evaluate data structure using state"""
     data = _evaluate(data, state, mask_secrets=mask_secrets)
 
-    return remove_masked_str(data)
+    data = remove_masked_str(data)
+
+    if as_str:
+        if isinstance(data, Masked):
+            return '****MASKED****'
+
+    return data
 
 
 def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
