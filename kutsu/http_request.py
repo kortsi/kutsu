@@ -27,50 +27,6 @@ Json = dict[str, 'Json'] | list['Json'] | str | int | float | bool | None
 
 log = logging.getLogger(__name__)
 
-# TODO: NamedTuple?
-# class RequestConfig(TypedDict, total=False):
-#     """Config for request"""
-#     url: Node | str | None
-#     method: Node | str | None
-#     params: Node | dict[str, str] | None
-#     headers: Node | dict[str, str] | dict[str, list[str]] | None
-#     authorization: Node | str | None
-#     auth_scheme: Node | str | None
-#     auth_token: Node | str | None
-#     auth_username: Node | str | None
-#     auth_password: Node | str | None
-#     content_type: Node | str | None
-#     accept: Node | str | list[str] | None
-#     content: Node | str | bytes | None
-#     data: dict[str, str] | None
-#     files: dict[str, bytes | IO[bytes]] | None
-#     json: Node | Json | None
-#     stream: Node | AsyncByteStream | None
-#     cookies: Cookies | dict[str, str] | None
-#     defaults: State | dict[str, Any] | None
-#     raise_error: bool | None
-#     follow_redirects: bool | None
-#     name: str | None
-#     read_cookies_from: str | None
-#     save_cookies_to: str | None
-#     show_input_state: bool | None
-#     show_output_state: bool | None
-#     show_request: bool | None
-#     show_request_headers: bool | None
-#     show_response: bool | None
-#     show_response_headers: bool | None
-#     show_response_body: bool | None
-#     show_headers: bool | None
-#     show_max_body: int | None
-#     verbose: bool | None
-#     quiet: bool | None
-
-# def config_get(config: RequestConfig, key: str, default: Any = None) -> Any:
-#     """Get a value from the config or the default"""
-#     if key in config and config[key] is not None:  # type: ignore
-#         return config[key]  # type: ignore
-#     return default
-
 
 class HttpRequest(AsyncAction):
     """Base Class for HTTP Requests
@@ -137,6 +93,9 @@ class HttpRequest(AsyncAction):
     request: Request | None = None
     response: Response | None = None
 
+    _prepared_config: RequestConfig | None = None
+    _prepared_data: RequestData | None = None
+
     def __rich_repr__(self) -> Generator[Any, None, None]:
         yield 'method', self.method
         yield 'url', self.url
@@ -195,7 +154,7 @@ class HttpRequest(AsyncAction):
         yield 'response', self.response, None
         yield 'output_state', self.output_state, None
 
-    def _update_parameters(
+    def __init__(
         self,
         url: Node | str | None = None,
         method: Node | str | None = None,
@@ -225,13 +184,15 @@ class HttpRequest(AsyncAction):
         show_request: bool | None = None,
         show_request_headers: bool | None = None,
         show_response: bool | None = None,
-        show_response_body: bool | None = None,
         show_response_headers: bool | None = None,
-        show_max_body: int | None = None,
+        show_response_body: bool | None = None,
         show_headers: bool | None = None,
+        show_max_body: int | None = None,
         verbose: bool | None = None,
         quiet: bool | None = None,
     ) -> None:
+        # TODO: docstring with argument descriptions
+        super().__init__()
         if url is not None:
             self.url = url
         if params is not None:
@@ -278,25 +239,14 @@ class HttpRequest(AsyncAction):
             self.read_cookies_from = read_cookies_from
         if save_cookies_to is not None:
             self.save_cookies_to = save_cookies_to
-        if verbose is True:
-            self.verbose = True
-        if self.verbose is True:
-            # TODO: also print settings
-            self.show_input_state = True
-            self.show_output_state = True
-            self.show_request = True
-            self.show_request_headers = True
-            self.show_response = True
-            self.show_response_headers = True
+        if verbose is not None:
+            self.verbose = verbose
         if show_input_state is not None:
             self.show_input_state = show_input_state
         if show_output_state is not None:
             self.show_output_state = show_output_state
         if show_headers is not None:
             self.show_headers = show_headers
-        if self.show_headers is not None:
-            self.show_request_headers = self.show_headers
-            self.show_response_headers = self.show_headers
         if show_request is not None:
             self.show_request = show_request
         if show_request_headers is not None:
@@ -305,98 +255,12 @@ class HttpRequest(AsyncAction):
             self.show_response = show_response
         if show_response_body is not None:
             self.show_response_body = show_response_body
-        if self.show_response_body is not None:
-            if self.show_response_body is True:
-                self.show_max_body = None
         if show_response_headers is not None:
             self.show_response_headers = show_response_headers
         if show_max_body is not None:
             self.show_max_body = show_max_body
-        if quiet is True:
-            self.quiet = True
-        if self.quiet is True:
-            self.show_input_state = False
-            self.show_output_state = False
-            self.show_request = False
-            self.show_request_headers = False
-            self.show_response = False
-            self.show_response_headers = False
-
-    def __init__(
-        self,
-        url: Node | str | None = None,
-        method: Node | str | None = None,
-        params: Node | dict[str, str] | None = None,
-        headers: Node | dict[str, str] | dict[str, list[str]] | None = None,
-        authorization: Node | str | None = None,
-        auth_scheme: Node | str | None = None,
-        auth_token: Node | str | None = None,
-        auth_username: Node | str | None = None,
-        auth_password: Node | str | None = None,
-        content_type: Node | str | None = None,
-        accept: Node | str | list[str] | None = None,
-        content: Node | str | bytes | None = None,
-        data: dict[str, str] | None = None,
-        files: dict[str, bytes | IO[bytes]] | None = None,
-        json: Node | Json | None = None,
-        stream: Node | AsyncByteStream | None = None,
-        cookies: Cookies | dict[str, str] | None = None,
-        defaults: State | dict[str, Any] | None = None,
-        raise_error: bool | None = None,
-        follow_redirects: bool | None = None,
-        name: str | None = None,
-        read_cookies_from: str | None = None,
-        save_cookies_to: str | None = None,
-        show_input_state: bool | None = None,
-        show_output_state: bool | None = None,
-        show_request: bool | None = None,
-        show_request_headers: bool | None = None,
-        show_response: bool | None = None,
-        show_response_headers: bool | None = None,
-        show_response_body: bool | None = None,
-        show_headers: bool | None = None,
-        show_max_body: int | None = None,
-        verbose: bool | None = None,
-        quiet: bool | None = None,
-    ) -> None:
-        # TODO: docstring with argument descriptions
-        super().__init__()
-        self._update_parameters(
-            url=url,
-            method=method,
-            params=params,
-            headers=headers,
-            authorization=authorization,
-            auth_scheme=auth_scheme,
-            auth_token=auth_token,
-            auth_username=auth_username,
-            auth_password=auth_password,
-            content_type=content_type,
-            accept=accept,
-            content=content,
-            data=data,
-            files=files,
-            json=json,
-            stream=stream,
-            cookies=cookies,
-            defaults=defaults,
-            raise_error=raise_error,
-            follow_redirects=follow_redirects,
-            name=name,
-            read_cookies_from=read_cookies_from,
-            save_cookies_to=save_cookies_to,
-            show_input_state=show_input_state,
-            show_output_state=show_output_state,
-            show_request=show_request,
-            show_request_headers=show_request_headers,
-            show_response=show_response,
-            show_response_headers=show_response_headers,
-            show_response_body=show_response_body,
-            show_headers=show_headers,
-            show_max_body=show_max_body,
-            verbose=verbose,
-            quiet=quiet,
-        )
+        if quiet is not None:
+            self.quiet = quiet
 
     @property
     def request_prepared(self) -> bool:
@@ -409,6 +273,50 @@ class HttpRequest(AsyncAction):
     def reset(self) -> None:
         self.request = None
         self.response = None
+        self.input_state = None
+        self.output_state = None
+        self._prepared_config = None
+        self._prepared_data = None
+
+    def _input_state_changed(self, state: State) -> bool:
+        if self.input_state is None:
+            return True
+        if set(state) != set(self.input_state):
+            return True
+        for k in state:
+            if state[k] is not self.input_state[k]:
+                return True
+        return False
+
+    def _config_changed(self, config: RequestConfig) -> bool:
+        if self._prepared_config is None:
+            return True
+        for i, v in enumerate(config):
+            if v is not self._prepared_config[i]:
+                return True
+        return False
+
+    def _prepare_call(
+        self,
+        state: State,
+        config: RequestConfig | None = None,
+        /,
+        **kwargs: Any
+    ) -> Request:
+        if config is None:
+            config = RequestConfig()
+        for k, v in kwargs.items():
+            state[k] = v
+        if not self.request:
+            request = self.prepare(state, config=config)
+        elif self._input_state_changed(state):
+            request = self.prepare(state, config=config)
+        elif self._config_changed(config):
+            request = self.prepare(state, config=config)
+        else:
+            # Use the prepared request
+            request = self.request
+        return request
 
     def prepare(
         self,
@@ -417,17 +325,17 @@ class HttpRequest(AsyncAction):
     ) -> Request:
         """Prepare the request.
 
-        This method is called by the HTTP client before sending the request.
+        This method is called before sending the request.
         You may also call it manually to prepare the request before sending it,
         and possibly mutate self.request before sending.
         """
-        # TODO: this should accept the same kwargs as call_async
-        # TODO: merge _prepare_call into this?
         if config is None:
             config = self._make_request_config()
+        self._prepared_config = config
         self.input_state = State(state)
         s = self.input_state(State(config.defaults))
-        self.request = Request(
+        # TODO: create masked versions of these and use when printing
+        data = RequestData(
             method=self._prepare_method(s, config),
             url=self._prepare_url(s, config),
             params=self._prepare_params(s, config),
@@ -439,8 +347,8 @@ class HttpRequest(AsyncAction):
             stream=self._prepare_stream(s, config),
             cookies=self._prepare_cookies(s, config),
         )
-        # FIXME: mask_secrets
-        # log.info(self.request)
+        self._prepared_data = data
+        self.request = Request(**data._asdict())
         return self.request
 
     def _prepare_method(self, state: State, config: RequestConfig) -> str:
@@ -568,32 +476,6 @@ class HttpRequest(AsyncAction):
 
         return cookies or None
 
-    def _prepare_call(
-        self,
-        state: State,
-        config: RequestConfig | None = None,
-        /,
-        **kwargs: Any
-    ) -> Request:
-        if config is None:
-            config = RequestConfig()
-        for k, v in kwargs.items():
-            state[k] = v
-        if not self.request:
-            # Request was not prepared yet
-            request = self.prepare(state, config=config)
-        elif self.input_state != state:
-            # State has changed since request was prepared
-            request = self.prepare(state, config=config)
-        elif any(v is not None for v in config):
-            # Config has overrides, so prepare a new request
-            # TODO: store input config, compare that to incoming
-            request = self.prepare(state, config=config)
-        else:
-            # Use the prepared request
-            request = self.request
-        return request
-
     def _make_request_config(
         self,
         /,
@@ -695,7 +577,7 @@ class HttpRequest(AsyncAction):
             quiet=choose(quiet, self.quiet),
         )
 
-    # This is here just for REPL reference
+    # This is here just for REPL reference and tab completion of argument names
     def __call__(
         self,
         state: StateArg | None = None,
@@ -816,7 +698,6 @@ class HttpRequest(AsyncAction):
         **kwargs: Any,
     ) -> State:
         state = await super().call_async(State(state), **kwargs)
-        # config = RequestConfig(
         config = self._make_request_config(
             url=url,
             method=method,
@@ -853,30 +734,10 @@ class HttpRequest(AsyncAction):
             verbose=verbose,
             quiet=quiet,
         )
-        # # I think we should render config from self variables here and just use that
-        # # Also input config should probably be stored somewhere?
-        # if config.get('verbose') is True:
-        #     config['show_input_state'] = True
-        #     config['show_output_state'] = True
-        #     config['show_request'] = True
-        #     config['show_request_headers'] = True
-        #     config['show_response'] = True
-        #     config['show_response_headers'] = True
-        # if config.get('show_headers') is not None:
-        #     config['show_request_headers'] = config['show_headers']
-        #     config['show_response_headers'] = config['show_headers']
-        # if config.get('show_response_body') is True:
-        #     config['show_max_body'] = None
-        # if config.get('quiet') is True:
-        #     config['show_input_state'] = False
-        #     config['show_output_state'] = False
-        #     config['show_request'] = False
-        #     config['show_request_headers'] = False
-        #     config['show_response'] = False
-        #     config['show_response_headers'] = False
 
         request = self._prepare_call(state, config)
         self._print_input_state(config)
+        # TODO: also print prepared config
         self._print_request(config)
         async with AsyncClient() as client:
             response = await client.send(
@@ -889,7 +750,6 @@ class HttpRequest(AsyncAction):
         self, state: State, res: Response, config: RequestConfig
     ) -> State:
         self.response = res
-        # log.info(self.response)
         self._print_response(config)
         if config.raise_error:
             res.raise_for_status()
@@ -1112,3 +972,16 @@ class RequestConfig(NamedTuple):
     show_max_body: int | None = HttpRequest.show_max_body
     verbose: bool | None = HttpRequest.verbose
     quiet: bool | None = HttpRequest.quiet
+
+
+class RequestData(NamedTuple):
+    method: str | None = None
+    url: str | None = None
+    params: dict[str, str] | None = None
+    headers: dict[str, str] | None = None
+    content: str | bytes | None = None
+    data: dict[str, str] | None = None
+    files: dict[str, bytes | IO[bytes]] | None = None
+    json: Json | None = None
+    stream: AsyncByteStream | None = None
+    cookies: Cookies | None = None

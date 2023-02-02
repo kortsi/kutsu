@@ -182,11 +182,18 @@ class Node(metaclass=MetaNode):
     def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
         raise NotImplementedError(f'You must subclass {self.__class__.__name__}')
 
-    def __eq__(self, other: Any) -> 'Node':  # type: ignore
-        return Eq(self, other)
+    # TODO: not sure if we want to enable these (tests also disabled)
+    # Technically these do work, but they make it very easy to introduce errors and
+    # can make things very hard to reason about. All sorts of things expect these
+    # to return a boolean, while these would return a Node instead. Node will be
+    # evaluated to True. This can lead to unexpected behavior.
+    # You should use Eq() and Ne() directly instead.
 
-    def __ne__(self, other: Any) -> 'Node':  # type: ignore
-        return Ne(self, other)
+    # def __eq__(self, other: Any) -> 'Node':  # type: ignore
+    #     return Eq(self, other)
+
+    # def __ne__(self, other: Any) -> 'Node':  # type: ignore
+    #     return Ne(self, other)
 
     def __lt__(self, other: Any) -> 'Node':
         return Lt(self, other)
@@ -257,7 +264,7 @@ class Node(metaclass=MetaNode):
     def __invert__(self) -> 'Node':
         return DelIfNone(self)
 
-    # FIXME: neg?
+    # TODO: __neg__ and __pos__?
 
 
 class MetaUnaryNode(MetaNode):
