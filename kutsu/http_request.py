@@ -347,6 +347,7 @@ class HttpRequest(AsyncAction):
             stream=self._prepare_stream(s, config),
             cookies=self._prepare_cookies(s, config),
         )
+        # TODO: use masked data for printing
         self._prepared_data_masked = RequestData(
             method=self._prepare_method(s, config, mask_secrets=True),
             url=self._prepare_url(s, config, mask_secrets=True),
@@ -588,6 +589,28 @@ class HttpRequest(AsyncAction):
         def choose(first: T, second: U) -> T | U:
             return first if first is not None else second
 
+        # First evaluate instance defaults
+        if self.verbose is True:
+            show_input_state = True
+            show_output_state = True
+            show_request = True
+            show_request_headers = True
+            show_response = True
+            show_response_headers = True
+        if self.show_headers is not None:
+            show_request_headers = self.show_headers
+            show_response_headers = self.show_headers
+        if self.show_response_body is True:
+            show_max_body = None
+        if self.quiet is True:
+            show_input_state = False
+            show_output_state = False
+            show_request = False
+            show_request_headers = False
+            show_response = False
+            show_response_headers = False
+
+        # Then evaluate function args
         if verbose is True:
             show_input_state = True
             show_output_state = True
@@ -650,7 +673,7 @@ class HttpRequest(AsyncAction):
     # This is here just for REPL reference and tab completion of argument names
     def __call__(
         self,
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         url: Node | str | None = None,
         method: Node | str | None = None,
@@ -729,7 +752,7 @@ class HttpRequest(AsyncAction):
 
     async def call_async(
         self,
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         url: Node | str | None = None,
         method: Node | str | None = None,
@@ -823,9 +846,16 @@ class HttpRequest(AsyncAction):
         self._print_response(config)
         if config.raise_error:
             res.raise_for_status()
-        if self.save_cookies_to and res.cookies:
-            # TODO: we should combine these with any existing cookies
-            state[self.save_cookies_to] = res.cookies
+        if config.save_cookies_to and res.cookies:
+            if config.save_cookies_to in state:
+                if not isinstance(state[config.save_cookies_to], (dict, Cookies)):
+                    raise TypeError(
+                        'cookies must be a dict or Cookies, '
+                        f'not {type(state[config.save_cookies_to])}'
+                    )
+                state[config.save_cookies_to].update(res.cookies)
+            else:
+                state[config.save_cookies_to] = res.cookies
         self.output_state = State(state)
         self._print_output_state(config)
         self._print_end_request_processing(config)

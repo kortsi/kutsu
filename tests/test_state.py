@@ -385,20 +385,22 @@ def test_execute_parallel():
             state.answer = state.INSTANCE_NUMBER
             return state
 
-    def merge(state, results):
-        for result in results:
-            state.results[result.INSTANCE_NUMBER] = result.answer
+    def merge(state):
+        state.answers = [result.answer for result in state.results]
+        del state.results
         return state
 
     async def run_test():
-        par = Parallel([AsyncTestAction] * 10, merge)
+        # par = Parallel([AsyncTestAction] * 10, merge)
+        par = Parallel([AsyncTestAction] * 10)
         state = State(results=[None] * 10)
         state = await par.call_async(state)
-        return state
+        # return state
+        return state | merge
 
     state = asyncio.run(run_test())
-    assert len(state.results) == 10
-    assert state.results == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert len(state.answers) == 10
+    assert state.answers == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 
 def test_execute_1000_parallel():
@@ -411,15 +413,16 @@ def test_execute_1000_parallel():
         async def call_async(self, state=None):
             state = await super().call_async(state)
             await asyncio.sleep(SLEEP)
-            state.results[state.INSTANCE_NUMBER] = True
+            # state.results[state.INSTANCE_NUMBER] = True
+            state.result = True
             return state
 
     start_time = time()
-    s = State(results=[False] * n) | Sleeper()**n
+    s = {} | Sleeper()**n
     elapsed_time = time() - start_time
 
     # If elapsed was less than 1% of the cumulatime time, then it's parallel enough
     assert elapsed_time < SLEEP * n * 0.01
 
     for i in range(n):
-        assert s.results[i] is True
+        assert s.results[i].result is True

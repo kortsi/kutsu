@@ -11,7 +11,6 @@ from typing import (
     Callable,
     Generator,
     Iterator,
-    Optional,
     Protocol,
     Sequence,
     Union,
@@ -73,7 +72,7 @@ class Action(metaclass=MetaAction):
 
     def __call__(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **__: Any,
     ) -> State:
@@ -210,7 +209,7 @@ class AsyncAction(Action, metaclass=MetaAsyncAction):
 
     def __call__(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **kwargs: Any,
     ) -> State:
@@ -238,7 +237,7 @@ class AsyncAction(Action, metaclass=MetaAsyncAction):
 
     async def call_async(
         self,
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **__: Any,
     ) -> State:
@@ -252,21 +251,30 @@ class AsyncAction(Action, metaclass=MetaAsyncAction):
         return f'{self.__class__.__name__}()'
 
 
-def simple_state_merge(state: State, results: list[ParallelState]) -> State:
-    """Merges a list of result states into a source state"""
-    for r in results:
-        state = r(state)
-    return state
-
-
 class Parallel(AsyncAction):
-    """A set of async actions that are executed in parallel"""
+    """A set of async actions that are executed in parallel
+
+    The input state is fed into each action with an added extra attribute
+    `INSTANCE_NUMBER`, which is the index of the action in the list of actions.
+
+    The resulting state has a single attribute, `results`, which is a list of
+    the resulting states of each action.
+
+    If `return_exceptions` is True, the `results` list may contain exceptions
+    raised by actions that failed. For successful actions, the list will contain
+    a State instance.
+
+    If `return_exceptions` is False (the default), the `results` list will only
+    contain State instances, and the first failure in any actions will raise an
+    exception. The rest of the actions are not cancelled in this case.
+    """
     actions: list[AsyncAction]
+    return_exceptions: bool
 
     def __init__(
         self,
         actions: Sequence[AsyncAction | type[AsyncAction] | StateTransformerCoro],
-        merge: Optional[MergeFn] = None
+        return_exceptions: bool = False,
     ) -> None:
         super().__init__()
         actions_ = []
@@ -281,16 +289,15 @@ class Parallel(AsyncAction):
                 raise ValueError('All parallel actions must be async actions')
 
         self.actions = actions_
-        self.merge = merge
+        self.return_exceptions = return_exceptions
 
     def __repr__(self) -> str:
-        m = f', merge={self.merge.__name__}' if self.merge else ''
-        return f"{self.__class__.__name__}({self.actions}{m})"
+        return f"{self.__class__.__name__}({self.actions})"
 
     def __len__(self) -> int:
         return len(self.actions)
 
-    async def call_async(self, state: StateArg | None = None, /, **__: Any) -> State:
+    async def call_async(self, state: StateArg | None, /, **__: Any) -> State:
         state_ = State(state)
         queue: list[Awaitable[State]] = []
 
@@ -298,16 +305,10 @@ class Parallel(AsyncAction):
             action = state_(INSTANCE_NUMBER=instance_number) >> action
             queue.append(action.call_async(state_))
 
-        results: list[ParallelState] = await asyncio.gather(*queue)
-
-        merge_fn = self.merge or simple_state_merge
-        state_ = merge_fn(state_, results)
-
-        if hasattr(state_, 'INSTANCE_NUMBER'):
-            # Delete instance number after all have been executed
-            delattr(state_, 'INSTANCE_NUMBER')
-
-        return state_
+        return State(
+            results=await
+            asyncio.gather(*queue, return_exceptions=self.return_exceptions)
+        )
 
 
 class Identity(Action):
@@ -318,7 +319,7 @@ class Identity(Action):
 
     def __call__(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **__: Any,
     ) -> State:
@@ -345,7 +346,7 @@ class Default(Action):
 
     def __call__(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **__: Any,
     ) -> State:
@@ -361,7 +362,7 @@ class Slice(Action):
 
     def __call__(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **__: Any,
     ) -> State:
@@ -378,7 +379,7 @@ class Eval(Action):
 
     def __call__(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **__: Any,
     ) -> State:
@@ -398,7 +399,7 @@ class Override(Action):
 
     def __call__(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **__: Any,
     ) -> State:
@@ -427,14 +428,14 @@ class Chain(AsyncAction):
                 raise TypeError(f'Not chainable: {action}')
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({repr(self.actions)})"
+        return f"{self.__class__.__name__}({self.actions})"
 
     def __len__(self) -> int:
         return len(self.actions)
 
     def __call__(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **kwargs: Any,
     ) -> State:
@@ -450,7 +451,7 @@ class Chain(AsyncAction):
 
     async def call_async(
         self,  # pylint:disable=unused-variable
-        state: StateArg | None = None,
+        state: StateArg | None,
         /,
         **kwargs: Any,
     ) -> State:
@@ -672,11 +673,3 @@ class StateProtocol(Protocol):
 
     def __eq__(self, other: object) -> bool:
         ...
-
-
-class ParallelState(StateProtocol):
-    """State for Parallel instances"""
-    INSTANCE_NUMBER: int
-
-
-MergeFn = Callable[[State, list[ParallelState]], State]
