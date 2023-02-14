@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Collection, Mapping
+from contextlib import suppress
 from string import Template
 from typing import Any
 
@@ -190,18 +191,23 @@ class Node(metaclass=MetaNode):
     def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
         raise NotImplementedError(f'You must subclass {self.__class__.__name__}')
 
-    # TODO: not sure if we want to enable these (tests also disabled)
-    # Technically these do work, but they make it very easy to introduce errors and
-    # can make things very hard to reason about. All sorts of things expect these
-    # to return a boolean, while these would return a Node instead. Node will be
-    # evaluated to True. This can lead to unexpected behavior.
-    # You should use Eq() and Ne() directly instead.
+    def __bool__(self) -> bool:
+        # If someone tries to use an expression in a boolean context, we will fail
+        # loudly by default. Any expression will evaluate to True when fed to the bool()
+        # function. Eq and Ne have special handling for this case, but for any other
+        # expression we will fail here.
+        raise RuntimeError(
+            'This expression cannot be evaluated to a boolean directly. '
+            'You can evaluate the expression first using the "evaluate" function. '
+            'Expressions can be only compared for equality or inequality. '
+            'Other types of comparisons are not supported. '
+        )
 
-    # def __eq__(self, other: Any) -> 'Node':  # type: ignore
-    #     return Eq(self, other)
+    def __eq__(self, other: Any) -> 'Node':  # type: ignore
+        return Eq(self, other)
 
-    # def __ne__(self, other: Any) -> 'Node':  # type: ignore
-    #     return Ne(self, other)
+    def __ne__(self, other: Any) -> 'Node':  # type: ignore
+        return Ne(self, other)
 
     def __lt__(self, other: Any) -> 'Node':
         return Lt(self, other)
@@ -273,6 +279,29 @@ class Node(metaclass=MetaNode):
         return DelIfNone(self)
 
     # TODO: __neg__ and __pos__?
+
+
+class MetaNullaryNode(MetaNode):
+    """NullaryNode type"""
+
+    def __repr__(cls) -> str:
+        return cls.__name__
+
+    def __eq__(cls, other: Any) -> 'Node':  # type: ignore
+        return Eq(cls, other)
+
+    def __ne__(cls, other: Any) -> 'Node':  # type: ignore
+        return Ne(cls, other)
+
+
+class NullaryNode(Node, metaclass=MetaNullaryNode):  # pylint: disable=abstract-method
+    """Nullary expression"""
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}()'
+
+    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+        return None
 
 
 class MetaUnaryNode(MetaNode):
@@ -466,6 +495,47 @@ class Eq(BinaryBoolNode):
     def __repr__(self) -> str:
         return f'({repr(self.arg0)} == {repr(self.arg1)})'
 
+    def __bool__(self) -> bool:
+        """Compare two expressions"""
+        # These first three are for checking equality of nullary nodes
+        # An instance of a nullary node is considered equal to the class
+        with suppress(TypeError):
+            if issubclass(self.arg0, NullaryNode) and issubclass(self.arg1, NullaryNode):
+                return self.arg0 is self.arg1
+        with suppress(TypeError):
+            if issubclass(self.arg0, NullaryNode):
+                if isinstance(self.arg1, self.arg0):
+                    return True
+        with suppress(TypeError):
+            if issubclass(self.arg1, NullaryNode):
+                if isinstance(self.arg0, self.arg1):
+                    return True
+        if type(self.arg0) is not type(self.arg1):  # pylint: disable=unidiomatic-typecheck
+            return False
+        if isinstance(self.arg0, NullaryNode):
+            return True
+        if isinstance(self.arg0, UnaryNode):
+            return bool(self.arg0.arg0 == self.arg1.arg0)
+        if isinstance(self.arg0, BinaryNode):
+            return (
+                bool(self.arg0.arg0 == self.arg1.arg0)
+                and bool(self.arg0.arg1 == self.arg1.arg1)
+            )
+        if isinstance(self.arg0, TernaryNode):
+            return (
+                bool(self.arg0.arg0 == self.arg1.arg0)
+                and bool(self.arg0.arg1 == self.arg1.arg1)
+                and bool(self.arg0.arg2 == self.arg1.arg2)
+            )
+        if self.arg0 is self.arg1:
+            return True
+        if not isinstance(self.arg0, Node):
+            return bool(self.arg0 == self.arg1)
+        # We don't know how to compare other kinds of expressions
+        raise RuntimeError(
+            f'Unable to compare expressions for equality: {self.arg0} == {self.arg1}'
+        )
+
 
 class Ne(BinaryBoolNode):
     """arg0 != arg1"""
@@ -475,6 +545,10 @@ class Ne(BinaryBoolNode):
 
     def __repr__(self) -> str:
         return f'({repr(self.arg0)} != {repr(self.arg1)})'
+
+    def __bool__(self) -> bool:
+        """Compare two expressions"""
+        return not Eq.__bool__(self)  # type: ignore
 
 
 class Gt(BinaryBoolNode):
@@ -631,7 +705,7 @@ class Pow(BinaryAlgebraNode):
         return f'({repr(self.arg0)} ** {repr(self.arg1)})'
 
 
-class Del(Node):
+class Del(NullaryNode):
     """Delete dict key or list item"""
 
     def __repr__(self) -> str:

@@ -36,6 +36,7 @@ class HttpRequest(AsyncAction):
     """
 
     # TODO: we need good argument descriptions
+    # TODO: if some kind of body data given but no method, default to POST
     method: Node | str | None = 'GET'
     url: Node | str | None = ''
     params: Node | dict[str, str] | None = None
@@ -61,10 +62,10 @@ class HttpRequest(AsyncAction):
     follow_redirects: bool = True
 
     # Read cookies from this state variable and add them to the request
-    read_cookies_from: str | None = 'cookies'
+    read_cookies_from: str | None = '_cookies'
 
     # Save cookies from response to this state variable
-    save_cookies_to: str | None = 'cookies'
+    save_cookies_to: str | None = read_cookies_from
 
     # Use this as default state. Incoming state overrides these values.
     defaults: State | dict[str, Any] | None = None
@@ -285,7 +286,8 @@ class HttpRequest(AsyncAction):
         if set(state) != set(self.input_state):
             return True
         for k in state:
-            if state[k] is not self.input_state[k]:
+            # if state[k] is not self.input_state[k]:
+            if state[k] != self.input_state[k]:
                 return True
         return False
 
@@ -293,7 +295,8 @@ class HttpRequest(AsyncAction):
         if self._prepared_config is None:
             return True
         for i, v in enumerate(config):
-            if v is not self._prepared_config[i]:
+            # if v is not self._prepared_config[i]:
+            if v != self._prepared_config[i]:
                 return True
         return False
 
@@ -869,7 +872,7 @@ class HttpRequest(AsyncAction):
         return f'{self.__class__.__name__}<{make_object_id(self)}>'
 
     def _print_request(self, config: RequestConfig) -> None:
-        # TODO: mask secrets
+        assert self._prepared_data_masked is not None
         show_request = config.show_request
         show_request_headers = config.show_request_headers
         if not show_request and not show_request_headers:
@@ -884,10 +887,15 @@ class HttpRequest(AsyncAction):
         now = time.strftime('%Y-%m-%d %H:%M:%S %Z', time.localtime())
         # console.rule(f'{name} Fetch {now}')
         console.print(f'[bold]*** Fetch {now} [{name}][/bold]')
-        status = f'{req.method} {req.url} HTTP/1.1'
+        method = self._prepared_data_masked.method
+        url = self._prepared_data_masked.url
+        # status = f'{req.method} {req.url} HTTP/1.1'
+        status = f'{method} {url} HTTP/1.1'
         headers = [
-            f'{name.decode("ascii")}: {value.decode("ascii")}'
-            for name, value in req.headers.raw
+            # f'{name.decode("ascii")}: {value.decode("ascii")}'
+            f'{name}: {value}'
+            # for name, value in req.headers.raw
+            for name, value in (self._prepared_data_masked.headers or {}).items()
         ]
         hdrs = '\n'.join(headers)
         if show_request_headers:
@@ -902,10 +910,13 @@ class HttpRequest(AsyncAction):
                 word_wrap=True,
             )
         )
+        # TODO: mask secrets in request content
         content = req.content.decode('utf-8')
         if content:
             # console.rule(characters='–')
             syntax_console.print(content)
+        if show_request_headers or content:
+            console.print()
 
     def _print_response(self, config: RequestConfig) -> None:
         show_response = config.show_response
@@ -965,9 +976,7 @@ class HttpRequest(AsyncAction):
                 syntax_console.print(syntax)
         else:
             console.print(f'<{len(res.content)} bytes of binary data>')
-        console.print(
-            f'[bold]*** Response {downloaded} received in {elapsed} [{name}][/bold]'
-        )
+        console.print(f'[bold]*** Received {downloaded} in {elapsed} [{name}][/bold]')
 
     def _print_input_state(self, config: RequestConfig) -> None:
         show_input_state = config.show_input_state
@@ -995,37 +1004,42 @@ class HttpRequest(AsyncAction):
             return
         self._print_state(self.output_state, config)
 
-    def _print_state(self, state: State, config: RequestConfig) -> None:
-        read_cookies_from = config.read_cookies_from
-        save_cookies_to = config.save_cookies_to
+    def _print_state(
+        self,
+        state: State,
+        config: RequestConfig,  # pylint: disable=unused-argument
+    ) -> None:
+        # read_cookies_from = config.read_cookies_from
+        # save_cookies_to = config.save_cookies_to
         console = get_console(soft_wrap=True)
         if len(state) == 0:
             console.print('[italic]Empty state[/italic]')
         else:
-            for k in state:
-                v = state[k]
-                if k in {read_cookies_from, save_cookies_to}:
-                    continue
-                console.print(f'{k}={v}')
-            if (
-                read_cookies_from and read_cookies_from in state
-                or save_cookies_to and save_cookies_to in state
-            ):
-                if read_cookies_from and read_cookies_from in state:
-                    cookies = state[read_cookies_from]
-                else:
-                    assert save_cookies_to is not None
-                    cookies = state[save_cookies_to]
-                if cookies:
-                    print('cookies=')
-                    for cookie in cookies.jar:
-                        console.print(
-                            # f'- {repr(cookie)}'
-                            f'- {cookie.name}="{cookie.value}" for {cookie.domain} {cookie.path}',
-                            # no_wrap=True,
-                        )
-                else:
-                    console.print('[italic]Empty cookie Jar[/italic]')
+            # for k in state:
+            #     v = state[k]
+            #     if k in {read_cookies_from, save_cookies_to}:
+            #         continue
+            #     console.print(f'{k}={v}')
+            # if (
+            #     read_cookies_from and read_cookies_from in state
+            #     or save_cookies_to and save_cookies_to in state
+            # ):
+            #     if read_cookies_from and read_cookies_from in state:
+            #         cookies = state[read_cookies_from]
+            #     else:
+            #         assert save_cookies_to is not None
+            #         cookies = state[save_cookies_to]
+            #     if cookies:
+            #         print('cookies=')
+            #         for cookie in cookies.jar:
+            #             console.print(
+            #                 # f'- {repr(cookie)}'
+            #                 f'- {cookie.name}="{cookie.value}" for {cookie.domain} {cookie.path}',
+            #                 # no_wrap=True,
+            #             )
+            #     else:
+            #         console.print('[italic]Empty cookie Jar[/italic]')
+            console.print(state)
         console.print('')
 
     def _print_end_request_processing(self, config: RequestConfig) -> None:
