@@ -3,6 +3,11 @@ name = "kutsu"
 version = "0.1.0"
 description = ""
 authors = ["Mikko Kortelainen <mikko.kortelainen@techelp.fi>"]
+license = "MIT"
+homepage = "https://github.com/kortsi/kutsu"
+repository = "https://github.com/kortsi/kutsu"
+readme = "README.md"
+include = ["README.md", "LICENSE"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
