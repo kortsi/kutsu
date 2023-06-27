@@ -61,10 +61,14 @@ def remove_masked_str(data: Any) -> Any:
 
 
 def evaluate(
-    data: Any, state: State, mask_secrets: bool = False, as_str: bool = False
+    data: Any,
+    state: State,
+    mask_secrets: bool = False,
+    as_str: bool = False,
+    context: dict[type, Any] | None = None,
 ) -> Any:
     """Evaluate data structure using state"""
-    data = _evaluate(data, state, mask_secrets=mask_secrets)
+    data = _evaluate(data, state, mask_secrets=mask_secrets, context=context)
 
     data = remove_masked_str(data)
 
@@ -75,7 +79,12 @@ def evaluate(
     return data
 
 
-def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
+def _evaluate(
+    data: Any,
+    state: State,
+    mask_secrets: bool = False,
+    context: dict[type, Any] | None = None,
+) -> Any:
     """Evaluate data structure using state"""
 
     if isinstance(data, str):
@@ -94,7 +103,11 @@ def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
         variables = {}
         for v in variable_names:
             variables[v] = _evaluate(
-                getattr(state, v, None), state, mask_secrets=mask_secrets
+                # TODO:  we should raise exception if key not found
+                getattr(state, v, None),
+                state,
+                mask_secrets=mask_secrets,
+                context=context,
             )
 
         masked = False
@@ -118,7 +131,9 @@ def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
         return string
 
     if isinstance(data, Secret):
-        secret_value = _evaluate(data.arg0, state, mask_secrets=mask_secrets)
+        secret_value = _evaluate(
+            data.arg0, state, mask_secrets=mask_secrets, context=context
+        )
         if mask_secrets:
             if isinstance(secret_value, Masked):
                 return secret_value
@@ -130,10 +145,12 @@ def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
         # at the collection level
         return data
 
+    # TODO: add node to support inserting data to a dict or a list
+
     if isinstance(data, list):
         L = []
         for d in data:
-            result = _evaluate(d, state, mask_secrets=mask_secrets)
+            result = _evaluate(d, state, mask_secrets=mask_secrets, context=context)
             # Exclude values marked with Del()
             if not isinstance(result, Del) and result is not Del:
                 L.append(result)
@@ -142,7 +159,7 @@ def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
     if isinstance(data, set):
         S = set()
         for d in data:
-            result = _evaluate(d, state, mask_secrets=mask_secrets)
+            result = _evaluate(d, state, mask_secrets=mask_secrets, context=context)
             # Exclude values marked with Del()
             if not isinstance(result, Del) and result is not Del:
                 S.add(result)
@@ -151,7 +168,7 @@ def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
     if isinstance(data, tuple):
         T = []
         for d in data:
-            result = _evaluate(d, state, mask_secrets=mask_secrets)
+            result = _evaluate(d, state, mask_secrets=mask_secrets, context=context)
             # Exclude values marked with Del()
             if not isinstance(result, Del) and result is not Del:
                 T.append(result)
@@ -160,8 +177,8 @@ def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
     if isinstance(data, dict):
         D = {}
         for k, v in data.items():
-            result_key = _evaluate(k, state, mask_secrets=mask_secrets)
-            result_value = _evaluate(v, state, mask_secrets=mask_secrets)
+            result_key = _evaluate(k, state, mask_secrets=mask_secrets, context=context)
+            result_value = _evaluate(v, state, mask_secrets=mask_secrets, context=context)
             # Exclude keys marked with value Del()
             if not isinstance(result_value, Del) and result_value is not Del:
                 D[result_key] = result_value
@@ -169,7 +186,10 @@ def _evaluate(data: Any, state: State, mask_secrets: bool = False) -> Any:
 
     if isinstance(data, Node):
         return _evaluate(
-            data(state, mask_secrets=mask_secrets), state, mask_secrets=mask_secrets
+            data(state, mask_secrets=mask_secrets, context=context),
+            state,
+            mask_secrets=mask_secrets,
+            context=context,
         )
 
     return data
@@ -188,7 +208,12 @@ class Node(metaclass=MetaNode):
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}()'
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
         raise NotImplementedError(f'You must subclass {self.__class__.__name__}')
 
     def __bool__(self) -> bool:
@@ -270,6 +295,7 @@ class Node(metaclass=MetaNode):
         return And(other, self)
 
     def __or__(self, other: Any) -> 'Node':
+        # TODO: this is problematic for two dicts, as it would be usually a merge
         return Or(self, other)
 
     def __ror__(self, other: Any) -> 'Node':
@@ -300,7 +326,12 @@ class NullaryNode(Node, metaclass=MetaNullaryNode):  # pylint: disable=abstract-
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}()'
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
         return None
 
 
@@ -382,8 +413,15 @@ class TernaryNode(Node, metaclass=MetaTernaryNode):  # pylint: disable=abstract-
 class UnaryBoolNode(UnaryNode):
     """Unary boolean expression"""
 
-    def __call__(self, state: State, mask_secrets: bool = False) -> bool:
-        return self.eval(_evaluate(self.arg0, state, mask_secrets=mask_secrets))
+    def __call__(
+        self,
+        state: State,
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> bool:
+        return self.eval(
+            _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
+        )
 
     def eval(self, value: Any) -> bool:
         """Evaluate"""
@@ -474,9 +512,14 @@ class Not(UnaryBoolNode):
 class BinaryBoolNode(BinaryNode):
     """Binary boolean expression"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> bool | Masked:
-        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
-        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets)
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> bool | Masked:
+        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
+        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets, context=context)
         if isinstance(first, Masked) or isinstance(second, Masked):
             return Masked(bool)
         return self.eval(first, second)
@@ -611,18 +654,25 @@ class NotIn(BinaryBoolNode):
 class BinaryAlgebraNode(BinaryNode):
     """Binary algebra expression"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
         # Evaluate data
-        first = _evaluate(self.arg0, state, mask_secrets=False)
-        second = _evaluate(self.arg1, state, mask_secrets=False)
-        data = _evaluate(self.eval(first, second), state, mask_secrets=False)
+        first = _evaluate(self.arg0, state, mask_secrets=False, context=context)
+        second = _evaluate(self.arg1, state, mask_secrets=False, context=context)
+        data = _evaluate(
+            self.eval(first, second), state, mask_secrets=False, context=context
+        )
 
         if not mask_secrets:
             return data
 
         # See if we must return a secret
-        first_secret = _evaluate(self.arg0, state, mask_secrets=True)
-        second_secret = _evaluate(self.arg1, state, mask_secrets=True)
+        first_secret = _evaluate(self.arg0, state, mask_secrets=True, context=context)
+        second_secret = _evaluate(self.arg1, state, mask_secrets=True, context=context)
         if isinstance(first_secret, Masked) or isinstance(second_secret, Masked):
             # We should hide the result
             return Masked(type(data))
@@ -711,31 +761,49 @@ class Del(NullaryNode):
     def __repr__(self) -> str:
         return 'Del()'
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
         return RuntimeError('Del instance should not be called')
 
 
 class DelIfNone(UnaryNode):
     """If arg0 is None then Del() else arg0"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
-        result = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        result = _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
         return Del() if result is None else result
 
 
 class Var(UnaryNode):
     """Get variable arg0 from state and evaluate it"""
 
-    def __call__(self, state: State, mask_secrets: bool = False) -> Any:
+    def __call__(
+        self,
+        state: State,
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
         # key = get_key(_subst_data(self.arg0, state))
-        key = _evaluate(self.arg0, state)
+        key = _evaluate(self.arg0, state, context=context)
+        # TODO:  we should raise exception if key not found, unless default given
         value = getattr(state, key, None)
 
-        value = _evaluate(value, state, mask_secrets=mask_secrets)
-        new_value = _evaluate(value, state, mask_secrets=mask_secrets)
+        value = _evaluate(value, state, mask_secrets=mask_secrets, context=context)
+        new_value = _evaluate(value, state, mask_secrets=mask_secrets, context=context)
         while new_value != value:
             value = new_value
-            new_value = _evaluate(value, state, mask_secrets=mask_secrets)
+            new_value = _evaluate(
+                value, state, mask_secrets=mask_secrets, context=context
+            )
 
         return value
 
@@ -752,18 +820,28 @@ class Var(UnaryNode):
 class Env(UnaryNode):
     """Get variable arg0 from the environment. No evaluation is done."""
 
-    def __call__(self, state: State, mask_secrets: bool = False) -> str | None:
+    def __call__(
+        self,
+        state: State,
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> str | None:
         return os.getenv(self.arg0)
 
 
 class GetItem(BinaryNode):
     """Subscription operation"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
-        obj = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
-        key = _evaluate(self.arg1, state, mask_secrets=False)
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        obj = _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
+        key = _evaluate(self.arg1, state, mask_secrets=False, context=context)
         value = obj[key]
-        return _evaluate(value, state, mask_secrets=mask_secrets)
+        return _evaluate(value, state, mask_secrets=mask_secrets, context=context)
 
     # def __getattr__(self, name: str) -> Any:
     #     return GetAttr(self, name)
@@ -778,11 +856,16 @@ class GetItem(BinaryNode):
 class GetAttr(BinaryNode):
     """Attribute get operation"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
-        obj = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
-        key = _evaluate(self.arg1, state, mask_secrets=False)
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        obj = _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
+        key = _evaluate(self.arg1, state, mask_secrets=False, context=context)
         value = getattr(obj, key)
-        return _evaluate(value, state, mask_secrets=mask_secrets)
+        return _evaluate(value, state, mask_secrets=mask_secrets, context=context)
 
     # def __getattr__(self, name: str) -> Any:
     #    return GetAttr(self, name)
@@ -800,8 +883,13 @@ class Secret(UnaryNode):
     This is used as a special placeholder which can be used to
     conceal the value when eg. logging"""
 
-    def __call__(self, state: State, mask_secrets: bool = False) -> Any:
-        return _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+    def __call__(
+        self,
+        state: State,
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        return _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({type(self.arg0).__name__})"
@@ -815,7 +903,12 @@ class Secret(UnaryNode):
 class Raise(UnaryNode):
     """Raise exception"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
         raise RuntimeError(self.arg0)
 
 
@@ -826,7 +919,12 @@ class If(TernaryNode):
         If(Gt('y', 0), 'greater than zero', 'not positive')
     """
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
         if isinstance(self.arg0, str):
             # We have a variable name
             p = Var(self.arg0)
@@ -835,9 +933,9 @@ class If(TernaryNode):
             p = self.arg0
 
         # FIXME: this will reveal Secret(bool) value of self.arg0
-        truthy: bool = _evaluate(IsTruthy(p), state, mask_secrets=False)
+        truthy: bool = _evaluate(IsTruthy(p), state, mask_secrets=False, context=context)
         result = self.arg1 if truthy else self.arg2
-        return _evaluate(result, state, mask_secrets=mask_secrets)
+        return _evaluate(result, state, mask_secrets=mask_secrets, context=context)
 
 
 class Select(TernaryNode):
@@ -853,7 +951,12 @@ class Select(TernaryNode):
         )
     """
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
         if isinstance(self.arg0, str):
             # We have a variable name
             e = Var(self.arg0)
@@ -861,19 +964,24 @@ class Select(TernaryNode):
             # We expect an expression of some kind
             e = self.arg0
 
-        key = _evaluate(e, state, mask_secrets=False)
+        key = _evaluate(e, state, mask_secrets=False, context=context)
 
         result = self.arg1[key] if key in self.arg1 else self.arg2
 
         # return _subst_data(result, state)
-        return _evaluate(result, state, mask_secrets=mask_secrets)
+        return _evaluate(result, state, mask_secrets=mask_secrets, context=context)
 
 
 class Json(UnaryNode):
     """Render json - prepare for json.dumps"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
-        data = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        data = _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
 
         def to_json(data: Any) -> Any:
             if isinstance(data, Mapping):
@@ -890,10 +998,15 @@ class Json(UnaryNode):
 class Or(BinaryNode):
     """arg0 if arg0 is truthy else arg1"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
-        p = _evaluate(IsTruthy(self.arg0), state, mask_secrets=False)
-        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
-        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets)
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        p = _evaluate(IsTruthy(self.arg0), state, mask_secrets=False, context=context)
+        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
+        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets, context=context)
         if isinstance(first, Masked) or isinstance(second, Masked):
             return Masked(bool)
         return first if p else second
@@ -905,10 +1018,15 @@ class Or(BinaryNode):
 class And(BinaryNode):
     """arg1 if arg0 is truthy else arg0"""
 
-    def __call__(self, state: 'State', mask_secrets: bool = False) -> Any:
-        p = _evaluate(IsTruthy(self.arg0), state, mask_secrets=False)
-        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets)
-        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets)
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        p = _evaluate(IsTruthy(self.arg0), state, mask_secrets=False, context=context)
+        first = _evaluate(self.arg0, state, mask_secrets=mask_secrets, context=context)
+        second = _evaluate(self.arg1, state, mask_secrets=mask_secrets, context=context)
         if isinstance(first, Masked) or isinstance(second, Masked):
             return Masked(bool)
         return second if p else first
@@ -939,3 +1057,163 @@ class And(BinaryNode):
 #             result = None
 #
 #         return _evaluate(result, state, mask_secrets=mask_secrets)
+
+import tornado.escape
+
+
+class ProxyExpression(Node):
+    # TODO: __bool__
+    # TODO: I think we need to move expression evaluation from __call__ to something else
+    # TODO: because we need to be able to generate a Call expression from __call__
+    pass
+
+
+class ServerRequestProxy(ProxyExpression):
+    """Proxy for request"""
+
+    # We make our own input-sanitized versions of getters for requests
+
+    def __getitem__(self, key: str | slice) -> Any:
+        return ServerRequestGetItemProxy(self, key)
+
+    def __getattr__(self, key: str) -> Any:
+        """We actually use __getitem__ for attributes as well"""
+        return ServerRequestGetAttrProxy(self, key)
+
+
+class ServerRequestGetItemProxy(ServerRequestProxy):
+    """Proxy for __getitem__"""
+
+    def __init__(self, proxy: ServerRequestProxy, key: str | slice):
+        self.proxy = proxy
+        self.key = key
+
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        assert context is not None
+        # We evaluate with an empty state for input sanitization
+        thing = _evaluate(self.proxy, State(), mask_secrets=mask_secrets, context=context)
+        try:
+            return thing[self.key]
+        except (KeyError, TypeError):
+            return None
+
+
+class ServerRequestGetAttrProxy(ServerRequestProxy):
+    """Proxy for __getattr__"""
+
+    def __init__(self, proxy: ServerRequestProxy, key: str | slice):
+        self.proxy = proxy
+        self.key = key
+
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        assert context is not None
+        # We evaluate with an empty state for input sanitization
+        thing = _evaluate(self.proxy, State(), mask_secrets=mask_secrets, context=context)
+        try:
+            return object.__getattribute__(thing, self.key)
+        except (KeyError, TypeError):
+            return None
+
+
+class ServerRequestContentProxy(ServerRequestProxy):
+
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        assert context is not None
+        request = context[ServerRequestProxy]
+        return request.body
+
+
+class ServerRequestContentStrProxy(ServerRequestContentProxy):
+
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        assert context is not None
+        request = context[ServerRequestProxy]
+        return bytes.decode(request.body, 'utf-8')
+
+
+class ServerRequestJsonProxy(ServerRequestContentProxy):
+
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        assert context is not None
+        request = context[ServerRequestProxy]
+        return tornado.escape.json_decode(request.body)
+
+
+class ServerRequestFormProxy(ServerRequestContentProxy):
+
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        assert context is not None
+        request = context[ServerRequestProxy]
+        return {
+            k: [bytes.decode(x, 'utf-8') for x in v]
+            for k, v in request.body_arguments.items()
+        }
+
+
+class ServerRequestQueryProxy(ServerRequestProxy):
+
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        assert context is not None
+        request = context[ServerRequestProxy]
+        return {
+            k: [bytes.decode(x, 'utf-8') for x in v]
+            for k, v in request.query_arguments.items()
+        }
+
+
+class ServerRequestHeadersProxy(ServerRequestProxy):
+
+    def __call__(
+        self,
+        state: 'State',
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> Any:
+        assert context is not None
+        request = context[ServerRequestProxy]
+        return request.headers
+
+
+class Req:
+    # TODO: scheme, method, url, url_path, url_query, url_host, cookies
+    content: Any = ServerRequestContentProxy()
+    text: Any = ServerRequestContentStrProxy()
+    json: Any = ServerRequestJsonProxy()
+    query: Any = ServerRequestQueryProxy()
+    form: Any = ServerRequestFormProxy()
+    headers: Any = ServerRequestHeadersProxy()

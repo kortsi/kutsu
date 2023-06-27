@@ -1,17 +1,24 @@
 """HTTP Requests"""
 from __future__ import annotations
 
+import asyncio
 import base64
+import functools
 import json as jsonlib
 import logging
 import time
-from typing import IO, Any, Generator, NamedTuple, TypeVar
+import typing
+from contextlib import closing
+from typing import IO, Any, Callable, Generator, NamedTuple, TypeVar
 
+import httpcore
+import httpx
+import pygments
 import rich.console
 import rich.syntax
-from httpx import AsyncByteStream, AsyncClient, Cookies, Request, Response
+from httpx import AsyncByteStream, AsyncClient, Auth, Cookies, Request, Response
 
-from .expressions import Node, evaluate
+from .expressions import Node, Secret, _evaluate, evaluate
 from .state import AsyncAction, State, StateArg
 from .util import (
     bytes_to_readable,
@@ -24,8 +31,151 @@ T = TypeVar('T')
 U = TypeVar('U')
 
 Json = dict[str, 'Json'] | list['Json'] | str | int | float | bool | None
+JsonTemplate = dict[
+    str, 'JsonTemplate'] | list['JsonTemplate'] | str | int | float | bool | Node | None
 
 log = logging.getLogger(__name__)
+
+
+class AwsSigV4Auth(Node):
+    """AWS Sigv4 Authentication (AWS4-HMAC-SHA256)
+
+    With static access key and secret key:
+
+        auth = AwsSigv4Auth(
+            service='execute-api',
+            region='us-east-1',
+            access_key='AWS_ACCESS_KEY_ID',
+            secret_key='AWS_SECRET_ACCESS_KEY',
+        )
+
+    With STS credentials:
+
+        import boto3
+        credentials = boto3.Session(profile_name="<profile>").get_credentials()
+        auth = AwsSigv4Auth(
+            service='execute-api',
+            region='us-east-1',
+            access_key=credentials.access_key,
+            secret_key=credentials.secret_key,
+            token=credentials.token,
+        )
+    """
+
+    def __init__(
+        self,
+        access_key: Node | str,
+        secret_key: Node | str,
+        service: Node | str,
+        region: Node | str,
+        token: Node | str | None = None,
+    ) -> None:
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.token = token
+        self.service = service
+        self.region = region
+
+    def __call__(
+        self,
+        state: State,
+        mask_secrets: bool = False,
+        context: dict[type, Any] | None = None,
+    ) -> httpx.Auth:
+        try:
+            from httpx_auth_awssigv4 import SigV4Auth
+        except ImportError as e:
+            raise ImportError(
+                'To use AwsSigV4Auth, you need to install kutsu[aws] or httpx-auth-aws-sigv4'
+            ) from e
+
+        mask = mask_secrets
+        ctx = context
+        region = _evaluate(self.region, state, mask_secrets=mask, context=ctx)
+        service = _evaluate(self.service, state, mask_secrets=mask, context=ctx)
+        access_key = _evaluate(self.access_key, state, mask_secrets=mask, context=ctx)
+        secret_key = _evaluate(self.secret_key, state, mask_secrets=mask, context=ctx)
+        token = _evaluate(self.token, state, mask_secrets=mask, context=ctx)
+
+        # FIXME: is there a way to access FunctionAuth as non-private?
+        return httpx._auth.FunctionAuth(
+            SigV4Auth(
+                access_key=access_key,
+                secret_key=secret_key,
+                token=token,
+                service=service,
+                region=region,
+            )
+        )
+
+
+_boto3_credentials: dict[str, Any] = {}
+
+
+class AwsBotoAuth(AsyncAction):
+    """AWS Sigv4 Authentication (AWS4-HMAC-SHA256)
+
+    With static access key and secret key:
+
+        auth = AwsAuth(
+            service='execute-api',
+            region='us-east-1',
+            access_key='AWS_ACCESS_KEY_ID',
+            secret_key='AWS_SECRET_ACCESS_KEY',
+        )
+
+    With STS credentials:
+
+        import boto3
+        credentials = boto3.Session(profile_name="<profile>").get_credentials()
+        auth = AwsAuth(
+            service='execute-api',
+            region='us-east-1',
+            access_key=credentials.access_key,
+            secret_key=credentials.secret_key,
+            token=credentials.token,
+        )
+    """
+
+    def __init__(
+        self,
+        profile_name: str,
+        state_access_key_var: str = 'aws_access_key',
+        state_secret_key_var: str = 'aws_secret_key',
+        state_token_var: str = 'aws_token',
+    ) -> None:
+        super().__init__()
+        # FIXME: evalueate these:
+        self._profile_name = profile_name
+        self._state_access_key_var = state_access_key_var
+        self._state_secret_key_var = state_secret_key_var
+        self._state_token_var = state_token_var
+
+    def _boto3_auth(self) -> tuple[str, str, str | None]:
+        import boto3
+        if self._profile_name in _boto3_credentials:
+            credentials = _boto3_credentials[self._profile_name]
+        else:
+            session = boto3.Session(profile_name=self._profile_name)
+            credentials = session.get_credentials()
+            _boto3_credentials[self._profile_name] = credentials
+        return credentials.access_key, credentials.secret_key, credentials.token
+
+    async def call_async(
+        self,
+        state: StateArg | None,
+        /,
+        **__: Any,
+    ) -> State:
+        access_key, secret_key, token = await asyncio.to_thread(self._boto3_auth)
+        state = State(state)
+        state[self._state_access_key_var] = access_key
+        state[self._state_secret_key_var] = Secret(secret_key)
+        state[self._state_token_var] = Secret(token)
+        return state
+
+
+KUTSU_USER_AGENT = 'kutsu/0.1'
 
 
 class HttpRequest(AsyncAction):
@@ -39,8 +189,12 @@ class HttpRequest(AsyncAction):
     # TODO: if some kind of body data given but no method, default to POST
     method: Node | str | None = 'GET'
     url: Node | str | None = ''
+    http2: Node | bool = False
+    # TODO: rename to query?
     params: Node | dict[str, str] | None = None
     headers: Node | dict[str, str] | dict[str, list[str]] | None = None
+    user_agent: Node | str | None = KUTSU_USER_AGENT
+    auth: Node | Auth | tuple[str, str] | None = None
     authorization: Node | str | None = None
     auth_scheme: Node | str | None = None
     auth_token: Node | str | None = None
@@ -51,7 +205,7 @@ class HttpRequest(AsyncAction):
     content: Node | str | bytes | None = None
     data: Node | dict[str, str] | None = None
     files: Node | dict[str, bytes | IO[bytes]] | None = None
-    json: Node | Json | None = None
+    json: Node | JsonTemplate | None = None
     stream: Node | AsyncByteStream | None = None
     cookies: Node | Cookies | dict[str, str] | None = None
 
@@ -76,21 +230,29 @@ class HttpRequest(AsyncAction):
     name: str | None = None
 
     # Whether to print various things
+    # TODO: optionally direct output to logger instead of printing
+    # TODO: evaluate these?
     show_input_state: bool = False
     show_output_state: bool = False
+    show_connection_info: bool = False
+    show_ssl_info: bool = False
+    show_redirects: bool = True
     show_request: bool = True
     show_request_headers: bool = False
     show_response: bool = True
     show_response_headers: bool = False
-
+    # TODO: masked_request_headers
+    # TODO: masked_response_headers
     show_response_body: bool | None = None
     show_headers: bool | None = None
     verbose: bool = False
     quiet: bool = False
+    unmask: bool = False
 
     # Suppress text response bodies larger than this from printing
     show_max_body: int | None = 50 * 1024
 
+    client: AsyncClient | None = None
     request: Request | None = None
     response: Response | None = None
 
@@ -102,10 +264,15 @@ class HttpRequest(AsyncAction):
         yield 'method', self.method
         yield 'url', self.url
 
+        if self.http2:
+            yield 'http2', self.http2
         if self.params is not None:
             yield 'params', self.params
         if self.headers is not None:
             yield 'headers', self.headers
+        yield 'user_agent', self.user_agent, KUTSU_USER_AGENT
+        if self.auth is not None:
+            yield 'auth', self.auth
         if self.authorization is not None:
             yield 'authorization', self.authorization
         if self.auth_scheme is not None:
@@ -136,10 +303,13 @@ class HttpRequest(AsyncAction):
         yield 'defaults', self.defaults, None
         yield 'raise_error', self.raise_error, True
         yield 'follow_redirects', self.follow_redirects, True
-        yield 'read_cookies_from', self.read_cookies_from, 'cookies'
-        yield 'save_cookies_to', self.save_cookies_to, 'cookies'
+        yield 'read_cookies_from', self.read_cookies_from, '_cookies'
+        yield 'save_cookies_to', self.save_cookies_to, '_cookies'
         yield 'show_input_state', self.show_input_state, False
         yield 'show_output_state', self.show_output_state, False
+        yield 'show_connection_info', self.show_connection_info, False
+        yield 'show_ssl_info', self.show_ssl_info, False
+        yield 'show_redirects', self.show_redirects, False
         yield 'show_request', self.show_request, True
         yield 'show_request_headers', self.show_request_headers, False
         yield 'show_response', self.show_response, True
@@ -149,6 +319,7 @@ class HttpRequest(AsyncAction):
         yield 'show_max_body', self.show_max_body, 50 * 1024
         yield 'verbose', self.verbose, False
         yield 'quiet', self.quiet, False
+        yield 'unmask', self.unmask, False
         yield 'request_prepared', self.request_prepared, False
         yield 'input_state', self.input_state, None
         yield 'request', self.request, None
@@ -159,9 +330,12 @@ class HttpRequest(AsyncAction):
     def __init__(
         self,
         url: Node | str | None = None,
+        http2: Node | bool | None = None,
         method: Node | str | None = None,
         params: Node | dict[str, str] | None = None,
         headers: Node | dict[str, str] | dict[str, list[str]] | None = None,
+        user_agent: Node | str | None = None,
+        auth: Node | Auth | tuple[str, str] | None = None,
         authorization: Node | str | None = None,
         auth_scheme: Node | str | None = None,
         auth_token: Node | str | None = None,
@@ -183,6 +357,9 @@ class HttpRequest(AsyncAction):
         save_cookies_to: str | None = None,
         show_input_state: bool | None = None,
         show_output_state: bool | None = None,
+        show_connection_info: bool | None = None,
+        show_ssl_info: bool | None = None,
+        show_redirects: bool | None = None,
         show_request: bool | None = None,
         show_request_headers: bool | None = None,
         show_response: bool | None = None,
@@ -192,17 +369,24 @@ class HttpRequest(AsyncAction):
         show_max_body: int | None = None,
         verbose: bool | None = None,
         quiet: bool | None = None,
+        unmask: bool | None = None,
     ) -> None:
         # TODO: docstring with argument descriptions
         super().__init__()
         if url is not None:
             self.url = url
+        if http2 is not None:
+            self.http2 = http2
         if params is not None:
             self.params = params
         if method is not None:
             self.method = method
         if headers is not None:
             self.headers = headers
+        if user_agent is not None:
+            self.user_agent = user_agent
+        if auth is not None:
+            self.auth = auth
         if authorization is not None:
             self.authorization = authorization
         if auth_scheme is not None:
@@ -247,6 +431,12 @@ class HttpRequest(AsyncAction):
             self.show_input_state = show_input_state
         if show_output_state is not None:
             self.show_output_state = show_output_state
+        if show_connection_info is not None:
+            self.show_connection_info = show_connection_info
+        if show_ssl_info is not None:
+            self.show_ssl_info = show_ssl_info
+        if show_redirects is not None:
+            self.show_redirects = show_redirects
         if show_headers is not None:
             self.show_headers = show_headers
         if show_request is not None:
@@ -263,6 +453,8 @@ class HttpRequest(AsyncAction):
             self.show_max_body = show_max_body
         if quiet is not None:
             self.quiet = quiet
+        if unmask is not None:
+            self.unmask = unmask
 
     @property
     def request_prepared(self) -> bool:
@@ -273,6 +465,7 @@ class HttpRequest(AsyncAction):
         return self.response is not None
 
     def reset(self) -> None:
+        self.client = None
         self.request = None
         self.response = None
         self.input_state = None
@@ -319,13 +512,15 @@ class HttpRequest(AsyncAction):
             request = self.prepare(state, config=config)
         else:
             # Use the prepared request
-            request = self.request
+            # request = self.request
+            request = self.prepare(state, config=config, only_client=True)
         return request
 
     def prepare(
         self,
         state: State | dict[str, Any] | None = None,
         config: RequestConfig | None = None,
+        only_client: bool = False,
     ) -> Request:
         """Prepare the request.
 
@@ -333,16 +528,24 @@ class HttpRequest(AsyncAction):
         You may also call it manually to prepare the request before sending it,
         and possibly mutate self.request before sending.
         """
+        if only_client:
+            # We create a new client for each request
+            # Just copy the auth from the old client in this case
+            assert self.client is not None
+            assert self.request is not None
+            self.client = httpx.AsyncClient(auth=self.client.auth, http2=config.http2)
+            return self.request
         if config is None:
             config = self._make_request_config()
         self._prepared_config = config
         self.input_state = State(state)
         s = self.input_state(State(config.defaults))
+        auth = self._prepare_auth(s, config)
         data = RequestData(
             method=self._prepare_method(s, config),
             url=self._prepare_url(s, config),
             params=self._prepare_params(s, config),
-            headers=self._prepare_headers(s, config),
+            headers=self._prepare_headers(s, config, with_authorization=auth is None),
             content=self._prepare_content(s, config),
             data=self._prepare_data(s, config),
             files=self._prepare_files(s, config),
@@ -351,11 +554,15 @@ class HttpRequest(AsyncAction):
             cookies=self._prepare_cookies(s, config),
         )
         # TODO: use masked data for printing
+        # TODO: add a masked full url which contains masked query params
+        masked_auth = self._prepare_auth(s, config, mask_secrets=True)
         self._prepared_data_masked = RequestData(
             method=self._prepare_method(s, config, mask_secrets=True),
             url=self._prepare_url(s, config, mask_secrets=True),
             params=self._prepare_params(s, config, mask_secrets=True),
-            headers=self._prepare_headers(s, config, mask_secrets=True),
+            headers=self._prepare_headers(
+                s, config, mask_secrets=True, with_authorization=masked_auth is None
+            ),
             content=self._prepare_content(s, config, mask_secrets=True),
             data=self._prepare_data(s, config, mask_secrets=True),
             files=self._prepare_files(s, config, mask_secrets=True),
@@ -364,8 +571,247 @@ class HttpRequest(AsyncAction):
             cookies=self._prepare_cookies(s, config, mask_secrets=True),
         )
         self._prepared_data = data
-        self.request = Request(**data._asdict())
+        # self.request = Request(**data._asdict())
+        self.request = Request(
+            extensions={'trace': self._request_tracer(config=config)}, **data._asdict()
+        )
+        self.client = httpx.AsyncClient(auth=auth, http2=config.http2)
         return self.request
+
+    # TODO: combine existing print methods with these and have flags allowing to
+    # TODO: print authorization headers without masking secrets
+    def _format_request_headers(
+        self,
+        config: RequestConfig,
+        request: httpcore.Request,
+        http2: bool = False,
+    ) -> str:
+        version = 'HTTP/2' if http2 else 'HTTP/1.1'
+        headers = [
+            (name.lower() if http2 else name, value) for name, value in request.headers
+        ]
+        method = request.method.decode('ascii')
+        # TODO: mask secrets in target
+        # target = request.url.target.decode('ascii')
+        target = bytes(request.url).decode('ascii')
+        lines = [f'{method} {target} {version}']
+        if config.show_request_headers:
+            lines += [
+                f"{name.decode('ascii')}: {value.decode('ascii')}"
+                for name, value in headers
+            ]
+        return '\n'.join(lines)
+
+    def _format_response_headers(
+        self,
+        config: RequestConfig,
+        http_version: bytes,
+        status: int,
+        reason_phrase: bytes | None,
+        headers: list[tuple[bytes, bytes]],
+    ) -> str:
+        version = http_version.decode('ascii')
+        reason = (
+            httpx.codes.get_reason_phrase(status)
+            if reason_phrase is None else reason_phrase.decode('ascii')
+        )
+        lines = [f'{version} {status} {reason}']
+        if config.show_response_headers:
+            lines += [
+                f"{name.decode('ascii')}: {value.decode('ascii')}"
+                for name, value in headers
+            ]
+        else:
+            is_redirect = status in {301, 302, 303, 307, 308}
+            if is_redirect:
+                lines += [
+                    f"{name.decode('ascii')}: {value.decode('ascii')}"
+                    for name, value in headers
+                    if name.decode('ascii').lower() == 'location'
+                ]
+
+        return '\n'.join(lines)
+
+    def _show_request(
+        self,
+        request: httpcore.Request,
+        config: RequestConfig,
+        http2: bool = False,
+    ) -> None:
+        show_request = config.show_request
+        show_request_headers = config.show_request_headers
+        console = rich.console.Console(soft_wrap=True)
+        if not show_request and not show_request_headers:
+            return
+        if getattr(self.request, '_kutsu_redirected', False):
+            if not config.show_redirects:
+                return
+        http_text = self._format_request_headers(config, request, http2=http2)
+        syntax = rich.syntax.Syntax(http_text, 'http', theme='ansi_dark', word_wrap=False)
+        console.print(syntax)
+        if show_request_headers:
+            # syntax = rich.syntax.Syntax('', 'http', theme='ansi_dark', word_wrap=True)
+            # console.print(syntax)
+            # console.rule(characters='–', style='dim')
+            pass
+        if show_request and self.request is not None:
+            if self.request.content:
+                # console.print('─' * 4, style='dim')
+                console.print('─' * 60, style='dim')
+                # console.print('-' * 4, style='dim')
+                # console.rule(characters='–', style='dim')
+                # console.rule(characters='-', style='dim')
+                # console.print('-' * 78, style='dim')
+                # console.rule(characters='–', style='dim')
+                # console.print('––––', style='dim')
+                console.print(self.request.content.decode('utf-8'))
+                # console.print('––––', style='dim')
+                # console.rule(characters='-')
+                # console.rule(characters='-', style='dim')
+                # console.print('-' * 78, style='dim')
+                # console.rule(characters='–', style='dim')
+                # console.print('-' * 4, style='dim')
+                # console.print('─' * 4, style='dim')
+                console.print('─' * 60, style='dim')
+            elif self.request.method in ('POST', 'PUT', 'PATCH'):
+                console.print('[italic]Empty request body[/italic]')
+                # console.print()
+
+    def _show_response(
+        self,
+        config: RequestConfig,
+        http_version: bytes,
+        status: int,
+        reason_phrase: typing.Optional[bytes],
+        headers: typing.List[typing.Tuple[bytes, bytes]],
+    ) -> None:
+        show_response = config.show_response
+        show_response_headers = config.show_response_headers
+        show_request_headers = config.show_request_headers
+        if not show_response and not show_response_headers:
+            return
+        console = rich.console.Console(soft_wrap=True)
+        no_color_console = get_console(no_color=True, soft_wrap=True)
+        is_redirect = status in {301, 302, 303, 307, 308}
+        if is_redirect:
+            self.request._kutsu_redirected = True
+            if not config.show_redirects:
+                return
+        if not is_redirect:  # and show_request_headers:
+            name = self._make_request_name(config)
+            no_color_console.print(f'[bold]*** Response [{name}][/bold]')
+        http_text = self._format_response_headers(
+            config, http_version, status, reason_phrase, headers
+        )
+        syntax = rich.syntax.Syntax(http_text, 'http', theme='ansi_dark', word_wrap=False)
+        console.print(syntax)
+        # TODO: show redirect body if non-empty
+        if is_redirect and config.follow_redirects:
+            # console.print('↓', style='dim')
+            console.print('→ redirecting:', style='dim')
+            # console.print('')
+        # syntax = rich.syntax.Syntax('', 'http', theme='ansi_dark', word_wrap=True)
+        # console.print(syntax)
+
+    # def _get_lexer_for_response(self, response: Response) -> str:
+    #     content_type = response.headers.get('Content-Type')
+    #     if content_type is not None:
+    #         mime_type, _, _ = content_type.partition(';')
+    #         try:
+    #             return typing.cast(
+    #                 str,
+    #                 pygments.lexers.get_lexer_for_mimetype(mime_type.strip()
+    #                                                        ).name  # type: ignore
+    #             )
+    #         except pygments.util.ClassNotFound:  # pragma: no cover
+    #             pass
+    #     return ''
+
+    # def _show_response_body(self, response: Response) -> None:
+    #     console = rich.console.Console(soft_wrap=True)
+    #     lexer_name = self._get_lexer_for_response(response)
+    #     if lexer_name:
+    #         if lexer_name.lower() == 'json':
+    #             try:
+    #                 data = response.json()
+    #                 text = jsonlib.dumps(data, indent=4)
+    #             except ValueError:  # pragma: no cover
+    #                 text = response.text
+    #         else:
+    #             text = response.text
+
+    #         syntax = rich.syntax.Syntax(
+    #             text, lexer_name, theme='ansi_dark', word_wrap=False
+    #         )
+    #         console.print(syntax)
+    #     else:
+    #         console.print(f'<{len(response.content)} bytes of binary data>')
+
+    _PCTRTT = typing.Tuple[typing.Tuple[str, str], ...]
+    _PCTRTTT = typing.Tuple[_PCTRTT, ...]
+    _PeerCertRetDictType = typing.Dict[str, typing.Union[str, _PCTRTTT, _PCTRTT]]
+
+    def _format_certificate(self, cert: _PeerCertRetDictType) -> str:  # pragma: no cover
+        lines = []
+        for key, value in cert.items():
+            if isinstance(value, (list, tuple)):
+                lines.append(f'*   {key}:')
+                for item in value:
+                    if key in ('subject', 'issuer'):
+                        for sub_item in item:
+                            lines.append(f'*     {sub_item[0]}: {sub_item[1]!r}')
+                    elif isinstance(item, tuple) and len(item) == 2:
+                        lines.append(f'*     {item[0]}: {item[1]!r}')
+                    else:
+                        lines.append(f'*     {item!r}')
+            else:
+                lines.append(f'*   {key}: {value!r}')
+        return '\n'.join(lines)
+
+    def _request_tracer(
+        self,
+        config: RequestConfig,
+    ) -> Callable[[str, typing.Mapping[str, typing.Any]], typing.Awaitable[None]]:
+
+        async def async_trace(name: str, info: typing.Mapping[str, typing.Any]) -> None:
+            console = rich.console.Console()
+            if name == 'connection.connect_tcp.started' and config.show_connection_info:
+                host = info['host']
+                console.print(f'* Connecting to {host!r}')
+            elif name == 'connection.connect_tcp.complete' and config.show_connection_info:
+                stream = info['return_value']
+                server_addr = stream.get_extra_info('server_addr')
+                console.print(
+                    f'* Connected to {server_addr[0]!r} on port {server_addr[1]}'
+                )
+            elif name == 'connection.start_tls.complete' and config.show_ssl_info:
+                stream = info['return_value']
+                ssl_object = stream.get_extra_info('ssl_object')
+                version = ssl_object.version()
+                cipher = ssl_object.cipher()
+                server_cert = ssl_object.getpeercert()
+                alpn = ssl_object.selected_alpn_protocol()
+                console.print(f'* SSL established using {version!r} / {cipher[0]!r}')
+                console.print(f'* Selected ALPN protocol: {alpn!r}')
+                if server_cert:
+                    console.print('* Server certificate:')
+                    console.print(self._format_certificate(server_cert))
+            elif name == 'http11.send_request_headers.started':
+                request = info['request']
+                self._show_request(request, config, http2=False)
+            elif name == 'http2.send_request_headers.started':
+                request = info['request']
+                self._show_request(request, config, http2=True)
+            elif name == 'http11.receive_response_headers.complete':
+                http_version, status, reason_phrase, headers = info['return_value']
+                self._show_response(config, http_version, status, reason_phrase, headers)
+            elif name == 'http2.receive_response_headers.complete':
+                status, headers = info['return_value']
+                http_version = b'HTTP/2'
+                reason_phrase = None
+                self._show_response(config, http_version, status, reason_phrase, headers)
+
+        return async_trace
 
     def _prepare_method(
         self, state: State, config: RequestConfig, mask_secrets: bool = False
@@ -390,6 +836,51 @@ class HttpRequest(AsyncAction):
             raise TypeError(f'params must be a dict, not {type(params)}')
         return params
 
+    def _prepare_auth(
+        self,
+        state: State,
+        config: RequestConfig,
+        mask_secrets: bool = False
+    ) -> Auth | tuple[str, str] | None:
+        auth = evaluate(config.auth, state, mask_secrets=mask_secrets)
+        if auth is not None:
+            if not isinstance(auth, (Auth, tuple)):
+                raise TypeError(
+                    f'auth must be httpx.Auth or tuple[str, str], not {type(auth)}'
+                )
+            return auth
+
+        scheme = evaluate(
+            config.auth_scheme, state, mask_secrets=mask_secrets, as_str=True
+        )
+        token = evaluate(config.auth_token, state, mask_secrets=mask_secrets, as_str=True)
+        username = evaluate(
+            config.auth_username, state, mask_secrets=mask_secrets, as_str=True
+        )
+        password = evaluate(
+            config.auth_password, state, mask_secrets=mask_secrets, as_str=True
+        )
+        if token is None and None not in {username, password}:
+            if scheme is None:
+                scheme = 'Basic'
+            if scheme.lower() == 'basic':
+                return (username, password)
+            if scheme.lower() == 'digest':
+                return httpx.DigestAuth(username, password)
+
+        def inject_authorization_header(authorization: str, request: Request) -> Request:
+            request.headers['Authorization'] = authorization
+            return request
+
+        if token is not None:
+            if scheme is None or scheme.lower() == 'Bearer':
+                # FIXME: is there a way to access FunctionAuth as non-private?
+                return httpx._auth.FunctionAuth(
+                    functools.partial(inject_authorization_header, f'Bearer {token}')
+                )
+
+        return None
+
     def _prepare_authorization_header(
         self,
         state: State,
@@ -401,9 +892,11 @@ class HttpRequest(AsyncAction):
         )
         if authorization is not None:
             if not isinstance(authorization, str):
-                raise TypeError(f'authorization must be a str, not {type(authorization)}')
+                raise TypeError(f'authorization must be str, not {type(authorization)}')
             return authorization
 
+        # FIXME: we should move these to _prepare_auth and only provide custom
+        # FIXME: authorization header handling here if auth is None
         scheme = evaluate(
             config.auth_scheme, state, mask_secrets=mask_secrets, as_str=True
         )
@@ -416,6 +909,8 @@ class HttpRequest(AsyncAction):
         )
 
         if token is None and None not in (username, password):
+            # FIXME: basic auth is as easy as: auth=('user', 'pass')
+            # digest: auth = httpx.DigestAuth('user', 'pass')
             if scheme is None:
                 scheme = 'Basic'
             if scheme == 'Basic':
@@ -432,7 +927,8 @@ class HttpRequest(AsyncAction):
         self,
         state: State,
         config: RequestConfig,
-        mask_secrets: bool = False
+        mask_secrets: bool = False,
+        with_authorization: bool = False,
     ) -> dict[str, str] | None:
         headers = evaluate(config.headers or {}, state, mask_secrets=mask_secrets)
         if not isinstance(headers, dict):
@@ -442,11 +938,17 @@ class HttpRequest(AsyncAction):
         )
         if content_type is not None:
             headers['Content-Type'] = content_type
-        authorization = self._prepare_authorization_header(
-            state, config, mask_secrets=mask_secrets
+        user_agent = evaluate(
+            config.user_agent, state, mask_secrets=mask_secrets, as_str=True
         )
-        if authorization is not None:
-            headers['Authorization'] = authorization
+        if user_agent is not None:
+            headers['User-Agent'] = user_agent
+        if with_authorization:
+            authorization = self._prepare_authorization_header(
+                state, config, mask_secrets=mask_secrets
+            )
+            if authorization is not None:
+                headers['Authorization'] = authorization
         accept = evaluate(config.accept, state, mask_secrets=mask_secrets, as_str=True)
         if accept is not None:
             headers['Accept'] = accept
@@ -554,9 +1056,12 @@ class HttpRequest(AsyncAction):
         self,
         /,
         url: Node | str | None = None,
+        http2: Node | bool | None = None,
         method: Node | str | None = None,
         params: Node | dict[str, str] | None = None,
         headers: Node | dict[str, str] | dict[str, list[str]] | None = None,
+        user_agent: Node | str | None = None,
+        auth: Node | Auth | tuple[str, str] | None = None,
         authorization: Node | str | None = None,
         auth_scheme: Node | str | None = None,
         auth_token: Node | str | None = None,
@@ -578,6 +1083,9 @@ class HttpRequest(AsyncAction):
         save_cookies_to: str | None = None,
         show_input_state: bool | None = None,
         show_output_state: bool | None = None,
+        show_connection_info: bool | None = None,
+        show_ssl_info: bool | None = None,
+        show_redirects: bool | None = None,
         show_request: bool | None = None,
         show_request_headers: bool | None = None,
         show_response: bool | None = None,
@@ -587,58 +1095,135 @@ class HttpRequest(AsyncAction):
         show_max_body: int | None = None,
         verbose: bool | None = None,
         quiet: bool | None = None,
+        unmask: bool | None = None,
     ) -> RequestConfig:
 
         def choose(first: T, second: U) -> T | U:
             return first if first is not None else second
 
+        _show_input_state = None
+        _show_output_state = None
+        _show_connection_info = None
+        _show_ssl_info = None
+        _show_redirects = None
+        _show_request = None
+        _show_request_headers = None
+        _show_response = None
+        _show_response_headers = None
+        _show_response_body = None
+        _show_max_body: int | None = None
+
         # First evaluate instance defaults
         if self.verbose is True:
-            show_input_state = True
-            show_output_state = True
-            show_request = True
-            show_request_headers = True
-            show_response = True
-            show_response_headers = True
+            _show_input_state = True
+            _show_output_state = True
+            _show_connection_info = True
+            _show_ssl_info = True
+            _show_redirects = True
+            _show_request = True
+            _show_request_headers = True
+            _show_response = True
+            _show_response_headers = True
         if self.show_headers is not None:
-            show_request_headers = self.show_headers
-            show_response_headers = self.show_headers
-        if self.show_response_body is True:
-            show_max_body = None
+            _show_request_headers = self.show_headers
+            _show_response_headers = self.show_headers
+        # if self.show_response_body is True:
+        #     _show_max_body = None
         if self.quiet is True:
-            show_input_state = False
-            show_output_state = False
-            show_request = False
-            show_request_headers = False
-            show_response = False
-            show_response_headers = False
+            _show_input_state = False
+            _show_output_state = False
+            _show_connection_info = False
+            _show_ssl_info = False
+            _show_redirects = False
+            _show_request = False
+            _show_request_headers = False
+            _show_response = False
+            _show_response_headers = False
+
+        # Check if any default have been overridden
+        # TODO: add constants for defaults and use them here and in the class definition
+        # TODO: we probably need sentinel values
+        # if self.show_input_state is True:
+        #     _show_input_state = True
+        # if self.show_output_state is True:
+        #     _show_output_state = True
+        # if self.show_connection_info is True:
+        #     _show_connection_info = True
+        # if self.show_ssl_info is True:
+        #     _show_ssl_info = True
+        # if self.show_request is False:
+        #     _show_request = False
+        # if self.show_request_headers is True:
+        #     _show_request_headers = True
+        # if self.show_response is False:
+        #     _show_response = False
+        # if self.show_response_headers is True:
+        #     _show_response_headers = True
+        # if self.show_response_body is not None:
+        #     _show_response_body = self.show_response_body
+        # if self.show_max_body is not None:
+        #     _show_max_body = self.show_max_body
 
         # Then evaluate function args
         if verbose is True:
-            show_input_state = True
-            show_output_state = True
-            show_request = True
-            show_request_headers = True
-            show_response = True
-            show_response_headers = True
+            _show_input_state = True
+            _show_output_state = True
+            _show_connection_info = True
+            _show_ssl_info = True
+            _show_redirects = True
+            _show_request = True
+            _show_request_headers = True
+            _show_response = True
+            _show_response_headers = True
         if show_headers is not None:
-            show_request_headers = show_headers
-            show_response_headers = show_headers
-        if show_response_body is True:
-            show_max_body = None
+            _show_request_headers = show_headers
+            _show_response_headers = show_headers
+        # if show_response_body is True:
+        #     _show_max_body = None
         if quiet is True:
-            show_input_state = False
-            show_output_state = False
-            show_request = False
-            show_request_headers = False
-            show_response = False
-            show_response_headers = False
+            _show_input_state = False
+            _show_output_state = False
+            _show_connection_info = False
+            _show_ssl_info = False
+            _show_redirects = False
+            _show_request = False
+            _show_request_headers = False
+            _show_response = False
+            _show_response_headers = False
+
+        if show_input_state is not None:
+            _show_input_state = show_input_state
+        if show_output_state is not None:
+            _show_output_state = show_output_state
+        if show_connection_info is not None:
+            _show_connection_info = show_connection_info
+        if show_ssl_info is not None:
+            _show_ssl_info = show_ssl_info
+        if show_redirects is not None:
+            _show_redirects = show_redirects
+        if show_request is not None:
+            _show_request = show_request
+        if show_request_headers is not None:
+            _show_request_headers = show_request_headers
+        if show_response is not None:
+            _show_response = show_response
+        if show_response_headers is not None:
+            _show_response_headers = show_response_headers
+        if show_response_body is not None:
+            _show_response_body = show_response_body
+        if _show_response_body is True:
+            _show_max_body = None
+        if show_max_body is not None:
+            _show_max_body = show_max_body
 
         return RequestConfig(
             url=choose(url, self.url),
+            http2=choose(http2, self.http2),
             method=choose(method, self.method),
             params=choose(params, self.params),
             headers=choose(headers, self.headers),
+            user_agent=choose(user_agent, self.user_agent),
+            auth=choose(auth, self.auth),
             authorization=choose(authorization, self.authorization),
             auth_scheme=choose(auth_scheme, self.auth_scheme),
             auth_token=choose(auth_token, self.auth_token),
@@ -658,19 +1243,24 @@ class HttpRequest(AsyncAction):
             name=choose(name, self.name),
             read_cookies_from=choose(read_cookies_from, self.read_cookies_from),
             save_cookies_to=choose(save_cookies_to, self.save_cookies_to),
-            show_input_state=choose(show_input_state, self.show_input_state),
-            show_output_state=choose(show_output_state, self.show_output_state),
-            show_request=choose(show_request, self.show_request),
-            show_request_headers=choose(show_request_headers, self.show_request_headers),
-            show_response=choose(show_response, self.show_response),
+            # TODO: we should probably not use choose for these but logic commented out above
+            show_input_state=choose(_show_input_state, self.show_input_state),
+            show_output_state=choose(_show_output_state, self.show_output_state),
+            show_connection_info=choose(_show_connection_info, self.show_connection_info),
+            show_ssl_info=choose(_show_ssl_info, self.show_ssl_info),
+            show_redirects=choose(_show_redirects, self.show_redirects),
+            show_request=choose(_show_request, self.show_request),
+            show_request_headers=choose(_show_request_headers, self.show_request_headers),
+            show_response=choose(_show_response, self.show_response),
             show_response_headers=choose(
-                show_response_headers, self.show_response_headers
+                _show_response_headers, self.show_response_headers
             ),
-            show_response_body=choose(show_response_body, self.show_response_body),
+            show_response_body=choose(_show_response_body, self.show_response_body),
             show_headers=choose(show_headers, self.show_headers),
-            show_max_body=choose(show_max_body, self.show_max_body),
+            show_max_body=choose(_show_max_body, self.show_max_body),
             verbose=choose(verbose, self.verbose),
             quiet=choose(quiet, self.quiet),
+            unmask=choose(unmask, self.unmask),
         )
 
     # This is here just for REPL reference and tab completion of argument names
@@ -679,9 +1269,12 @@ class HttpRequest(AsyncAction):
         state: StateArg | None,
         /,
         url: Node | str | None = None,
+        http2: Node | bool | None = None,
         method: Node | str | None = None,
         params: Node | dict[str, str] | None = None,
         headers: Node | dict[str, str] | dict[str, list[str]] | None = None,
+        user_agent: Node | str | None = None,
+        auth: Node | Auth | tuple[str, str] | None = None,
         authorization: Node | str | None = None,
         auth_scheme: Node | str | None = None,
         auth_token: Node | str | None = None,
@@ -703,6 +1296,9 @@ class HttpRequest(AsyncAction):
         save_cookies_to: str | None = None,
         show_input_state: bool | None = None,
         show_output_state: bool | None = None,
+        show_connection_info: bool | None = None,
+        show_ssl_info: bool | None = None,
+        show_redirects: bool | None = None,
         show_request: bool | None = None,
         show_request_headers: bool | None = None,
         show_response: bool | None = None,
@@ -712,14 +1308,18 @@ class HttpRequest(AsyncAction):
         show_max_body: int | None = None,
         verbose: bool | None = None,
         quiet: bool | None = None,
+        unmask: bool | None = None,
         **kwargs: Any,
     ) -> State:
         return super().__call__(
             state,
             url=url,
+            http2=http2,
             method=method,
             params=params,
             headers=headers,
+            user_agent=user_agent,
+            auth=auth,
             authorization=authorization,
             auth_scheme=auth_scheme,
             auth_token=auth_token,
@@ -741,6 +1341,9 @@ class HttpRequest(AsyncAction):
             save_cookies_to=save_cookies_to,
             show_input_state=show_input_state,
             show_output_state=show_output_state,
+            show_connection_info=show_connection_info,
+            show_ssl_info=show_ssl_info,
+            show_redirects=show_redirects,
             show_request=show_request,
             show_request_headers=show_request_headers,
             show_response=show_response,
@@ -750,6 +1353,7 @@ class HttpRequest(AsyncAction):
             show_max_body=show_max_body,
             verbose=verbose,
             quiet=quiet,
+            unmask=unmask,
             **kwargs,
         )
 
@@ -758,9 +1362,12 @@ class HttpRequest(AsyncAction):
         state: StateArg | None,
         /,
         url: Node | str | None = None,
+        http2: Node | bool | None = None,
         method: Node | str | None = None,
         params: Node | dict[str, str] | None = None,
         headers: Node | dict[str, str] | dict[str, list[str]] | None = None,
+        user_agent: Node | str | None = None,
+        auth: Node | Auth | tuple[str, str] | None = None,
         authorization: Node | str | None = None,
         auth_scheme: Node | str | None = None,
         auth_token: Node | str | None = None,
@@ -782,6 +1389,9 @@ class HttpRequest(AsyncAction):
         save_cookies_to: str | None = None,
         show_input_state: bool | None = None,
         show_output_state: bool | None = None,
+        show_connection_info: bool | None = None,
+        show_ssl_info: bool | None = None,
+        show_redirects: bool | None = None,
         show_request: bool | None = None,
         show_request_headers: bool | None = None,
         show_response: bool | None = None,
@@ -791,14 +1401,18 @@ class HttpRequest(AsyncAction):
         show_max_body: int | None = None,
         verbose: bool | None = None,
         quiet: bool | None = None,
+        unmask: bool | None = None,
         **kwargs: Any,
     ) -> State:
         state = await super().call_async(State(state), **kwargs)
         config = self._make_request_config(
             url=url,
+            http2=http2,
             method=method,
             params=params,
             headers=headers,
+            user_agent=user_agent,
+            auth=auth,
             authorization=authorization,
             auth_scheme=auth_scheme,
             auth_token=auth_token,
@@ -820,6 +1434,8 @@ class HttpRequest(AsyncAction):
             save_cookies_to=save_cookies_to,
             show_input_state=show_input_state,
             show_output_state=show_output_state,
+            show_connection_info=show_connection_info,
+            show_redirects=show_redirects,
             show_request=show_request,
             show_request_headers=show_request_headers,
             show_response=show_response,
@@ -829,13 +1445,15 @@ class HttpRequest(AsyncAction):
             show_max_body=show_max_body,
             verbose=verbose,
             quiet=quiet,
+            unmask=unmask,
         )
 
         request = self._prepare_call(state, config)
         self._print_input_state(config)
         # TODO: also print prepared config
         self._print_request(config)
-        async with AsyncClient() as client:
+        assert self.client is not None
+        async with self.client as client:
             response = await client.send(
                 request, follow_redirects=follow_redirects or self.follow_redirects
             )
@@ -848,7 +1466,8 @@ class HttpRequest(AsyncAction):
         self.response = res
         self._print_response(config)
         if config.raise_error:
-            res.raise_for_status()
+            if config.follow_redirects or res.status_code >= 400:
+                res.raise_for_status()
         if config.save_cookies_to and res.cookies:
             if config.save_cookies_to in state:
                 if not isinstance(state[config.save_cookies_to], (dict, Cookies)):
@@ -862,8 +1481,11 @@ class HttpRequest(AsyncAction):
         self.output_state = State(state)
         self._print_output_state(config)
         self._print_end_request_processing(config)
-        # TODO: on_response hook
+        state = self.on_response(state, res)
         # TODO: json hook
+        return state
+
+    def on_response(self, state: State, res: Response) -> State:
         return state
 
     def _make_request_name(self, config: RequestConfig) -> str:
@@ -878,8 +1500,8 @@ class HttpRequest(AsyncAction):
         if not show_request and not show_request_headers:
             return
         name = self._make_request_name(config)
-        console = get_console(no_color=True)
-        syntax_console = get_console()
+        console = get_console(no_color=True, soft_wrap=True)
+        syntax_console = get_console(soft_wrap=True)
         if self.request is None:
             console.print(f'[italic]{name} request not prepared[/italic]')
             return
@@ -887,15 +1509,25 @@ class HttpRequest(AsyncAction):
         now = time.strftime('%Y-%m-%d %H:%M:%S %Z', time.localtime())
         # console.rule(f'{name} Fetch {now}')
         console.print(f'[bold]*** Fetch {now} [{name}][/bold]')
+        return
         method = self._prepared_data_masked.method
         url = self._prepared_data_masked.url
         # status = f'{req.method} {req.url} HTTP/1.1'
         status = f'{method} {url} HTTP/1.1'
+
+        h = {} | (self._prepared_data_masked.headers or {})
+        for k, v in req.headers.raw:
+            name = k.decode('utf-8')
+            if name not in h:
+                h[name] = v.decode('utf-8')  # TODO: is it always utf-8?
+
         headers = [
             # f'{name.decode("ascii")}: {value.decode("ascii")}'
             f'{name}: {value}'
+            # TODO: print any header from req.headers.raw which is not in masked headers
             # for name, value in req.headers.raw
-            for name, value in (self._prepared_data_masked.headers or {}).items()
+            # for name, value in (self._prepared_data_masked.headers or {}).items()
+            for name, value in h.items()
         ]
         hdrs = '\n'.join(headers)
         if show_request_headers:
@@ -911,71 +1543,91 @@ class HttpRequest(AsyncAction):
             )
         )
         # TODO: mask secrets in request content
+        # TODO: pretty print json
         content = req.content.decode('utf-8')
         if content:
             # console.rule(characters='–')
             syntax_console.print(content)
-        if show_request_headers or content:
             console.print()
+        elif req.method in ('POST', 'PUT', 'PATCH'):
+            console.print('[italic]Empty request body[/italic]')
+        # if show_request_headers or content:
+        #     console.print()
 
     def _print_response(self, config: RequestConfig) -> None:
         show_response = config.show_response
         show_response_headers = config.show_response_headers
-        show_request_headers = config.show_request_headers
+        show_response_body = config.show_response_body
+        # show_request_headers = config.show_request_headers
         show_max_body = config.show_max_body
         if not show_response and not show_response_headers:
             return
         name = self._make_request_name(config)
-        console = get_console(no_color=True)
-        syntax_console = get_console()
-        if self.response is None:
-            console.print(f'[italic]{name} no response received[/italic]')
-            return
+        console = get_console(no_color=True, soft_wrap=True)
+        syntax_console = get_console(soft_wrap=True)
+        # if self.response is None:
+        #     console.print(f'[italic]{name} no response received[/italic]')
+        #     return
+        assert self.response is not None
         res = self.response
 
-        if show_request_headers:
-            console.print(f'[bold]*** Response [{name}][/bold]')
+        # if show_request_headers:
+        #     console.print(f'[bold]*** Response [{name}][/bold]')
         downloaded = bytes_to_readable(res.num_bytes_downloaded)
         elapsed = f'{int(res.elapsed.total_seconds()*1000)} ms'
-        # console.rule(f'{name} Response {downloaded} in {elapsed}')
-        status = f'{res.http_version} {res.status_code} {res.reason_phrase}'
-        headers = [
-            f'{name.decode("ascii")}: {value.decode("ascii")}'
-            for name, value in res.headers.raw
-        ]
-        hdrs = '\n'.join(headers)
-        if show_response_headers:
-            s = f'{status}\n{hdrs}\n'
-        else:
-            s = status
-        syntax_console.print(
-            rich.syntax.Syntax(f'{s}', 'http', theme='ansi_dark', word_wrap=True)
-        )
+        # # console.rule(f'{name} Response {downloaded} in {elapsed}')
+        # status = f'{res.http_version} {res.status_code} {res.reason_phrase or ""}'
+        # headers = [
+        #     f'{name.decode("ascii")}: {value.decode("ascii")}'
+        #     for name, value in res.headers.raw
+        # ]
+        # hdrs = '\n'.join(headers)
+        # if show_response_headers:
+        #     s = f'{status}\n{hdrs}\n'
+        # else:
+        #     s = status
+        # syntax_console.print(
+        #     rich.syntax.Syntax(f'{s}', 'http', theme='ansi_dark', word_wrap=True)
+        # )
 
-        # console.rule(characters='–')
-        lexer_name = get_lexer_for_content_type(res.headers.get('Content-Type'))
-        if lexer_name:
-            if (show_max_body is not None and len(res.text) > show_max_body):
-                max_ = bytes_to_readable(float(show_max_body))
-                console.print(
-                    f'[italic]Response body over {max_} suppressed by default[/italic]'
-                )
-            else:
-                if lexer_name.lower() == 'json':
-                    try:
-                        data = res.json()
-                        text = jsonlib.dumps(data, indent=4)
-                    except ValueError:
-                        text = res.text
+        if show_response_body is not False:
+            # console.rule(characters='–')
+            # console.rule(characters='–', style='dim')
+            # console.rule(characters='-', style='dim')
+            # console.print('-' * 78, style='dim')
+            # console.print('-' * 4, style='dim')
+            # console.print('─' * 4, style='dim')
+            console.print('─' * 60, style='dim')
+
+            lexer_name = get_lexer_for_content_type(res.headers.get('Content-Type'))
+            if lexer_name:
+                if (show_max_body is not None and len(res.text) > show_max_body):
+                    max_ = bytes_to_readable(float(show_max_body))
+                    console.print(
+                        f'[italic]Response body over {max_} suppressed by default[/italic]'
+                    )
                 else:
-                    text = res.text
+                    if lexer_name.lower() == 'json':
+                        try:
+                            data = res.json()
+                            text = jsonlib.dumps(data, indent=4)
+                        except ValueError:
+                            text = res.text
+                    else:
+                        text = res.text
 
-                syntax = rich.syntax.Syntax(
-                    text, lexer_name, theme='ansi_dark', word_wrap=True
-                )
-                syntax_console.print(syntax)
-        else:
-            console.print(f'<{len(res.content)} bytes of binary data>')
+                    syntax = rich.syntax.Syntax(
+                        text, lexer_name, theme='ansi_dark', word_wrap=False
+                    )
+                    syntax_console.print(syntax)
+            else:
+                console.print(f'<{len(res.content)} bytes of binary data>')
+            # console.rule(characters='–', style='dim')
+            # console.rule(characters='-', style='dim')
+            # console.print('-' * 78, style='dim')
+            # console.print('-' * 4, style='dim')
+            # console.print('─' * 4, style='dim')
+            console.print('─' * 60, style='dim')
         console.print(f'[bold]*** Received {downloaded} in {elapsed} [{name}][/bold]')
 
     def _print_input_state(self, config: RequestConfig) -> None:
@@ -983,7 +1635,7 @@ class HttpRequest(AsyncAction):
         if not show_input_state:
             return
         name = self._make_request_name(config)
-        console = get_console(no_color=True)
+        console = get_console(no_color=True, soft_wrap=True)
         # console.rule(f'{name} Input State')
         console.print(f'[bold]*** Input State [{name}][/bold]')
         if self.input_state is None:
@@ -996,7 +1648,7 @@ class HttpRequest(AsyncAction):
         if not show_output_state:
             return
         name = self._make_request_name(config)
-        console = get_console(no_color=True)
+        console = get_console(no_color=True, soft_wrap=True)
         # console.rule(f'{name} Output State')
         console.print(f'[bold]*** Output State [{name}][/bold]')
         if self.output_state is None:
@@ -1007,45 +1659,45 @@ class HttpRequest(AsyncAction):
     def _print_state(
         self,
         state: State,
-        config: RequestConfig,  # pylint: disable=unused-argument
+        config: RequestConfig,
     ) -> None:
-        # read_cookies_from = config.read_cookies_from
-        # save_cookies_to = config.save_cookies_to
+        read_cookies_from = config.read_cookies_from
+        save_cookies_to = config.save_cookies_to
         console = get_console(soft_wrap=True)
         if len(state) == 0:
             console.print('[italic]Empty state[/italic]')
         else:
-            # for k in state:
-            #     v = state[k]
-            #     if k in {read_cookies_from, save_cookies_to}:
-            #         continue
-            #     console.print(f'{k}={v}')
-            # if (
-            #     read_cookies_from and read_cookies_from in state
-            #     or save_cookies_to and save_cookies_to in state
-            # ):
-            #     if read_cookies_from and read_cookies_from in state:
-            #         cookies = state[read_cookies_from]
-            #     else:
-            #         assert save_cookies_to is not None
-            #         cookies = state[save_cookies_to]
-            #     if cookies:
-            #         print('cookies=')
-            #         for cookie in cookies.jar:
-            #             console.print(
-            #                 # f'- {repr(cookie)}'
-            #                 f'- {cookie.name}="{cookie.value}" for {cookie.domain} {cookie.path}',
-            #                 # no_wrap=True,
-            #             )
-            #     else:
-            #         console.print('[italic]Empty cookie Jar[/italic]')
-            console.print(state)
+            for k in state:
+                v = state[k]
+                if k in {read_cookies_from, save_cookies_to}:
+                    continue
+                console.print(f'{k}={v}')
+            if (
+                read_cookies_from and read_cookies_from in state
+                or save_cookies_to and save_cookies_to in state
+            ):
+                if read_cookies_from and read_cookies_from in state:
+                    cookies = state[read_cookies_from]
+                else:
+                    assert save_cookies_to is not None
+                    cookies = state[save_cookies_to]
+                if cookies:
+                    console.print('\n[italic]Cookies:[/italic]')
+                    for cookie in cookies.jar:
+                        console.print(
+                            # f'- {repr(cookie)}'
+                            f'{cookie.name}="{cookie.value}" for {cookie.domain} {cookie.path}',
+                            # no_wrap=True,
+                        )
+                else:
+                    console.print('[italic]Empty cookie Jar[/italic]')
+            # console.print(state)
         console.print('')
 
     def _print_end_request_processing(self, config: RequestConfig) -> None:
         show_output_state = config.show_output_state
         if show_output_state:
-            console = get_console(no_color=True)
+            console = get_console(no_color=True, soft_wrap=True)
             # console.rule()
             name = self._make_request_name(config)
             console.print(f'[bold]*** End Request Processing {name}[/bold]')
@@ -1053,9 +1705,12 @@ class HttpRequest(AsyncAction):
 
 class RequestConfig(NamedTuple):
     url: Node | str | None = HttpRequest.url
+    http2: Node | bool | None = HttpRequest.http2
     method: Node | str | None = HttpRequest.method
     params: Node | dict[str, str] | None = HttpRequest.params
     headers: Node | dict[str, str] | dict[str, list[str]] | None = HttpRequest.headers
+    user_agent: Node | str | None = HttpRequest.user_agent
+    auth: Node | Auth | tuple[str, str] | None = HttpRequest.auth
     authorization: Node | str | None = HttpRequest.authorization
     auth_scheme: Node | str | None = HttpRequest.auth_scheme
     auth_token: Node | str | None = HttpRequest.auth_token
@@ -1077,6 +1732,9 @@ class RequestConfig(NamedTuple):
     save_cookies_to: str | None = HttpRequest.save_cookies_to
     show_input_state: bool | None = HttpRequest.show_input_state
     show_output_state: bool | None = HttpRequest.show_output_state
+    show_connection_info: bool | None = HttpRequest.show_connection_info
+    show_ssl_info: bool | None = HttpRequest.show_ssl_info
+    show_redirects: bool | None = HttpRequest.show_redirects
     show_request: bool | None = HttpRequest.show_request
     show_request_headers: bool | None = HttpRequest.show_request_headers
     show_response: bool | None = HttpRequest.show_response
@@ -1086,6 +1744,7 @@ class RequestConfig(NamedTuple):
     show_max_body: int | None = HttpRequest.show_max_body
     verbose: bool | None = HttpRequest.verbose
     quiet: bool | None = HttpRequest.quiet
+    unmask: bool | None = HttpRequest.unmask
 
 
 class RequestData(NamedTuple):

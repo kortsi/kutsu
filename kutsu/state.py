@@ -60,6 +60,10 @@ class MetaAction(type):
         self: Action = cls()
         return self.__ror__(other)
 
+    def __or__(cls, other: StateTransformer) -> State:
+        self: Action = cls()
+        return self.__or__(other)
+
 
 class Action(metaclass=MetaAction):
     """Action"""
@@ -148,6 +152,13 @@ class Action(metaclass=MetaAction):
             return state.__or__(self)
         return NotImplemented  # type: ignore
 
+    def __or__(self, other: StateTransformer) -> State:
+        """This is here to support piping empty state to a pair of Actions
+
+        Eg. Action() | Action()
+        """
+        return State() | self | other
+
 
 class MetaAsyncAction(MetaAction):
     """Metaclass for AsyncAction"""
@@ -205,6 +216,7 @@ class AsyncAction(Action, metaclass=MetaAsyncAction):
         """Run n instances of self in parallel"""
         if not isinstance(n, int):
             return NotImplemented  # type: ignore
+        # TODO: find a way to instantiate n actions instead of using n refs to one action
         return Parallel([self] * n)
 
     def __call__(
@@ -213,16 +225,25 @@ class AsyncAction(Action, metaclass=MetaAsyncAction):
         /,
         **kwargs: Any,
     ) -> State:
+        # import trio
+        # return trio.run(self.call_async, State(state), **kwargs)
         try:
             loop = asyncio.get_running_loop()
+            # raise RuntimeError('Cannot call async action when a loop is already running')
         except RuntimeError:
             # No running loop
+            loop = None
+
+        if loop is None:
             return asyncio.run(self.call_async(State(state), **kwargs))
 
+        # TODO: replace with ThreadPooExecutor?
         try:
             import nest_asyncio
 
             # TODO: this should be optional, configurable and probably only done once
+            # FIXME: I think we should not do this. If someone needs to do it, they
+            # FIXME: can just: await action.call_async(...)
             nest_asyncio.apply()
         except ImportError:
             import warnings
@@ -306,6 +327,8 @@ class Parallel(AsyncAction):
             queue.append(action.call_async(state_))
 
         return State(
+            # TODO: allow customizing the name of the results attribute
+            # TODO: add an action to merge results into a single state
             results=await
             asyncio.gather(*queue, return_exceptions=self.return_exceptions)
         )
@@ -581,7 +604,6 @@ class State(metaclass=MetaState):
             raise KeyError(f'Key {key} not found')
         return getattr(self, key)
 
-    # This is here to make mypy happy
     def __setitem__(self, key: str, value: Any) -> None:
         setattr(self, key, value)
 

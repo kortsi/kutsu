@@ -369,7 +369,7 @@ def test_nested_sync_async():
         return s
 
     async def async_test_func(state):
-        s = State | sync_test_func
+        s = state | sync_test_func
         return s
 
     s = State | async_test_func
