@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kutsu"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 authors = ["Mikko Kortelainen <mikko.kortelainen@techelp.fi>"]
 license = "MIT"
@@ -10,15 +10,15 @@ readme = "README.md"
 include = ["README.md", "LICENSE"]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-nest-asyncio = "^1.5.6"
-httpx = { version = "^0.23.0", extras=["http2"] }
-rich = "^12.6.0"
-Pygments = "^2.14.0"
-tornado = "^6.2"
-trio = "^0.22.0"
-boto3 = { version = "^1.26.93", optional = true }
-httpx-auth-awssigv4 = { version = "^0.1.4", optional = true }
+python = ">=3.10,<4.0"
+# TODO: is nest-asyncio needed anymore?
+nest-asyncio = ">=1.5"
+httpx = { version = ">=0.23", extras=["http2"] }
+rich = ">=12"
+Pygments = ">=2"
+tornado = ">=6"
+boto3 = { version = ">=1.26", optional = true }
+httpx-auth-awssigv4 = { version = "*", optional = true }
 
 [tool.poetry.extras]
 aws = ["boto3", "httpx-auth-awssigv4"]
