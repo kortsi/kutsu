@@ -281,7 +281,7 @@ class HttpRequest(AsyncAction):
             yield 'auth_token', self.auth_token
         if self.auth_username is not None:
             yield 'auth_username', self.auth_username
-        if self.auth_username is not None:
+        if self.auth_password is not None:
             yield 'auth_password', self.auth_password
         if self.content_type is not None:
             yield 'content_type', self.content_type
@@ -914,7 +914,7 @@ class HttpRequest(AsyncAction):
             if scheme is None:
                 scheme = 'Basic'
             if scheme == 'Basic':
-                token = base64.b64encode('f{username}:{password}'.encode('utf-8'))
+                token = base64.b64encode(f'{username}:{password}'.encode('utf-8'))
             else:
                 raise ValueError(f'Unsupported authorization scheme: {scheme}')
 
@@ -1046,8 +1046,8 @@ class HttpRequest(AsyncAction):
             config.cookies, state, mask_secrets=mask_secrets, as_str=True
         )
         if self_cookies is not None:
-            if not isinstance(cookies, (dict, Cookies)):
-                raise TypeError(f'cookies must be a dict or Cookies, not {type(cookies)}')
+            if not isinstance(self_cookies, (dict, Cookies)):
+                raise TypeError(f'cookies must be a dict or Cookies, not {type(self_cookies)}')
             cookies.update(self_cookies)
 
         return cookies or None
@@ -1509,7 +1509,6 @@ class HttpRequest(AsyncAction):
         now = time.strftime('%Y-%m-%d %H:%M:%S %Z', time.localtime())
         # console.rule(f'{name} Fetch {now}')
         console.print(f'[bold]*** Fetch {now} [{name}][/bold]')
-        return
         method = self._prepared_data_masked.method
         url = self._prepared_data_masked.url
         # status = f'{req.method} {req.url} HTTP/1.1'
@@ -1738,7 +1737,7 @@ class RequestConfig(NamedTuple):
     show_request: bool | None = HttpRequest.show_request
     show_request_headers: bool | None = HttpRequest.show_request_headers
     show_response: bool | None = HttpRequest.show_response
-    show_response_headers: bool | None = HttpRequest.show_request_headers
+    show_response_headers: bool | None = HttpRequest.show_response_headers
     show_response_body: bool | None = HttpRequest.show_response_body
     show_headers: bool | None = HttpRequest.show_headers
     show_max_body: int | None = HttpRequest.show_max_body
