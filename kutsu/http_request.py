@@ -8,7 +8,6 @@ import json as jsonlib
 import logging
 import time
 import typing
-from contextlib import closing
 from typing import IO, Any, Callable, Generator, NamedTuple, TypeVar
 
 import httpcore
@@ -707,45 +706,7 @@ class HttpRequest(AsyncAction):
         console.print(syntax)
         # TODO: show redirect body if non-empty
         if is_redirect and config.follow_redirects:
-            # console.print('↓', style='dim')
             console.print('→ redirecting:', style='dim')
-            # console.print('')
-        # syntax = rich.syntax.Syntax('', 'http', theme='ansi_dark', word_wrap=True)
-        # console.print(syntax)
-
-    # def _get_lexer_for_response(self, response: Response) -> str:
-    #     content_type = response.headers.get('Content-Type')
-    #     if content_type is not None:
-    #         mime_type, _, _ = content_type.partition(';')
-    #         try:
-    #             return typing.cast(
-    #                 str,
-    #                 pygments.lexers.get_lexer_for_mimetype(mime_type.strip()
-    #                                                        ).name  # type: ignore
-    #             )
-    #         except pygments.util.ClassNotFound:  # pragma: no cover
-    #             pass
-    #     return ''
-
-    # def _show_response_body(self, response: Response) -> None:
-    #     console = rich.console.Console(soft_wrap=True)
-    #     lexer_name = self._get_lexer_for_response(response)
-    #     if lexer_name:
-    #         if lexer_name.lower() == 'json':
-    #             try:
-    #                 data = response.json()
-    #                 text = jsonlib.dumps(data, indent=4)
-    #             except ValueError:  # pragma: no cover
-    #                 text = response.text
-    #         else:
-    #             text = response.text
-
-    #         syntax = rich.syntax.Syntax(
-    #             text, lexer_name, theme='ansi_dark', word_wrap=False
-    #         )
-    #         console.print(syntax)
-    #     else:
-    #         console.print(f'<{len(response.content)} bytes of binary data>')
 
     _PCTRTT = typing.Tuple[typing.Tuple[str, str], ...]
     _PCTRTTT = typing.Tuple[_PCTRTT, ...]
@@ -1127,8 +1088,6 @@ class HttpRequest(AsyncAction):
         if self.show_headers is not None:
             _show_request_headers = self.show_headers
             _show_response_headers = self.show_headers
-        # if self.show_response_body is True:
-        #     _show_max_body = None
         if self.quiet is True:
             _show_input_state = False
             _show_output_state = False
@@ -1139,30 +1098,6 @@ class HttpRequest(AsyncAction):
             _show_request_headers = False
             _show_response = False
             _show_response_headers = False
-
-        # Check if any default have been overridden
-        # TODO: add constants for defaults and use them here and in the class definition
-        # TODO: we probably need sentinel values
-        # if self.show_input_state is True:
-        #     _show_input_state = True
-        # if self.show_output_state is True:
-        #     _show_output_state = True
-        # if self.show_connection_info is True:
-        #     _show_connection_info = True
-        # if self.show_ssl_info is True:
-        #     _show_ssl_info = True
-        # if self.show_request is False:
-        #     _show_request = False
-        # if self.show_request_headers is True:
-        #     _show_request_headers = True
-        # if self.show_response is False:
-        #     _show_response = False
-        # if self.show_response_headers is True:
-        #     _show_response_headers = True
-        # if self.show_response_body is not None:
-        #     _show_response_body = self.show_response_body
-        # if self.show_max_body is not None:
-        #     _show_max_body = self.show_max_body
 
         # Then evaluate function args
         if verbose is True:
@@ -1507,11 +1442,9 @@ class HttpRequest(AsyncAction):
             return
         req = self.request
         now = time.strftime('%Y-%m-%d %H:%M:%S %Z', time.localtime())
-        # console.rule(f'{name} Fetch {now}')
         console.print(f'[bold]*** Fetch {now} [{name}][/bold]')
         method = self._prepared_data_masked.method
         url = self._prepared_data_masked.url
-        # status = f'{req.method} {req.url} HTTP/1.1'
         status = f'{method} {url} HTTP/1.1'
 
         h = {} | (self._prepared_data_masked.headers or {})
@@ -1521,11 +1454,7 @@ class HttpRequest(AsyncAction):
                 h[name] = v.decode('utf-8')  # TODO: is it always utf-8?
 
         headers = [
-            # f'{name.decode("ascii")}: {value.decode("ascii")}'
             f'{name}: {value}'
-            # TODO: print any header from req.headers.raw which is not in masked headers
-            # for name, value in req.headers.raw
-            # for name, value in (self._prepared_data_masked.headers or {}).items()
             for name, value in h.items()
         ]
         hdrs = '\n'.join(headers)
@@ -1564,52 +1493,24 @@ class HttpRequest(AsyncAction):
                 console.print(f'<{len(req.content)} bytes of binary data>')
         elif req.method in ('POST', 'PUT', 'PATCH'):
             console.print('[italic]Empty request body[/italic]')
-        # if show_request_headers or content:
-        #     console.print()
 
     def _print_response(self, config: RequestConfig) -> None:
         show_response = config.show_response
         show_response_headers = config.show_response_headers
         show_response_body = config.show_response_body
-        # show_request_headers = config.show_request_headers
         show_max_body = config.show_max_body
         if not show_response and not show_response_headers:
             return
         name = self._make_request_name(config)
         console = get_console(no_color=True, soft_wrap=True)
         syntax_console = get_console(soft_wrap=True)
-        # if self.response is None:
-        #     console.print(f'[italic]{name} no response received[/italic]')
-        #     return
         assert self.response is not None
         res = self.response
 
-        # if show_request_headers:
-        #     console.print(f'[bold]*** Response [{name}][/bold]')
         downloaded = bytes_to_readable(res.num_bytes_downloaded)
         elapsed = f'{int(res.elapsed.total_seconds()*1000)} ms'
-        # # console.rule(f'{name} Response {downloaded} in {elapsed}')
-        # status = f'{res.http_version} {res.status_code} {res.reason_phrase or ""}'
-        # headers = [
-        #     f'{name.decode("ascii")}: {value.decode("ascii")}'
-        #     for name, value in res.headers.raw
-        # ]
-        # hdrs = '\n'.join(headers)
-        # if show_response_headers:
-        #     s = f'{status}\n{hdrs}\n'
-        # else:
-        #     s = status
-        # syntax_console.print(
-        #     rich.syntax.Syntax(f'{s}', 'http', theme='ansi_dark', word_wrap=True)
-        # )
 
         if show_response_body is not False:
-            # console.rule(characters='–')
-            # console.rule(characters='–', style='dim')
-            # console.rule(characters='-', style='dim')
-            # console.print('-' * 78, style='dim')
-            # console.print('-' * 4, style='dim')
-            # console.print('─' * 4, style='dim')
             console.print('─' * 60, style='dim')
 
             lexer_name = get_lexer_for_content_type(res.headers.get('Content-Type'))
@@ -1635,11 +1536,6 @@ class HttpRequest(AsyncAction):
                     syntax_console.print(syntax)
             else:
                 console.print(f'<{len(res.content)} bytes of binary data>')
-            # console.rule(characters='–', style='dim')
-            # console.rule(characters='-', style='dim')
-            # console.print('-' * 78, style='dim')
-            # console.print('-' * 4, style='dim')
-            # console.print('─' * 4, style='dim')
             console.print('─' * 60, style='dim')
         console.print(f'[bold]*** Received {downloaded} in {elapsed} [{name}][/bold]')
 
@@ -1649,7 +1545,6 @@ class HttpRequest(AsyncAction):
             return
         name = self._make_request_name(config)
         console = get_console(no_color=True, soft_wrap=True)
-        # console.rule(f'{name} Input State')
         console.print(f'[bold]*** Input State [{name}][/bold]')
         if self.input_state is None:
             console.print('[italic]No input state[/italic]')
@@ -1662,7 +1557,6 @@ class HttpRequest(AsyncAction):
             return
         name = self._make_request_name(config)
         console = get_console(no_color=True, soft_wrap=True)
-        # console.rule(f'{name} Output State')
         console.print(f'[bold]*** Output State [{name}][/bold]')
         if self.output_state is None:
             console.print('[italic]No output state[/italic]')

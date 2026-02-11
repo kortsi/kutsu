@@ -196,7 +196,6 @@ class HttpServer:
         self._io_loop.start()
         self._io_loop.close()
         self._io_loop = None
-        # log.debug('Server stopped')
 
     def start(self, restart: bool = True) -> None:
         if self.is_running:
