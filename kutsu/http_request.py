@@ -913,8 +913,8 @@ class HttpRequest(AsyncAction):
             # digest: auth = httpx.DigestAuth('user', 'pass')
             if scheme is None:
                 scheme = 'Basic'
-            if scheme == 'Basic':
-                token = base64.b64encode(f'{username}:{password}'.encode('utf-8'))
+            if scheme.lower() == 'basic':
+                token = base64.b64encode(f'{username}:{password}'.encode('utf-8')).decode('ascii')
             else:
                 raise ValueError(f'Unsupported authorization scheme: {scheme}')
 
