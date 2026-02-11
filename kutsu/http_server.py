@@ -12,14 +12,20 @@ import tornado.web
 from rich.logging import RichHandler
 
 
+_logging_configured = False
+
+
 def configure_logging() -> None:
+    global _logging_configured
+    if _logging_configured:
+        return
+    _logging_configured = True
     rich_handler = RichHandler(
         rich_tracebacks=True,
         tracebacks_show_locals=True,
         tracebacks_suppress=[tornado],
     )
     FORMAT = "[%(threadName)-10s] %(name)s: %(message)s"
-    # FORMAT = "[%(threadName)-10s] %(message)s"
     logging.basicConfig(
         level="NOTSET", format=FORMAT, datefmt="[%X]", handlers=[rich_handler]
     )
@@ -30,10 +36,6 @@ def configure_logging() -> None:
     logging.getLogger('hpack').setLevel(logging.INFO)
     logging.getLogger('botocore').setLevel(logging.INFO)
     logging.getLogger('urllib3.connectionpool').setLevel(logging.INFO)
-
-
-# FIXME: probably not the best place for this - move to a separate module?
-configure_logging()
 
 log = logging.getLogger(__name__)
 
@@ -198,6 +200,7 @@ class HttpServer:
         self._io_loop = None
 
     def start(self, restart: bool = True) -> None:
+        configure_logging()
         if self.is_running:
             if restart is False:
                 return
