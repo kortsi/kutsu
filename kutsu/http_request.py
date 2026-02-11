@@ -1543,11 +1543,11 @@ class HttpRequest(AsyncAction):
         )
         # TODO: mask secrets in request content
         # TODO: pretty print json
-        
+
         # Check if content is text or binary based on Content-Type
         content_type = req.headers.get('Content-Type')
         lexer_name = get_lexer_for_content_type(content_type)
-        
+
         if req.content:
             if lexer_name:
                 # Text content - decode with error handling
