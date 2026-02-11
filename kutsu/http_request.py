@@ -1543,11 +1543,25 @@ class HttpRequest(AsyncAction):
         )
         # TODO: mask secrets in request content
         # TODO: pretty print json
-        content = req.content.decode('utf-8')
-        if content:
-            # console.rule(characters='–')
-            syntax_console.print(content)
-            console.print()
+
+        # Check if content is text or binary based on Content-Type
+        content_type = req.headers.get('Content-Type')
+        lexer_name = get_lexer_for_content_type(content_type)
+
+        if req.content:
+            if lexer_name:
+                # Text content - decode with error handling
+                try:
+                    content = req.content.decode('utf-8')
+                    syntax_console.print(content)
+                    console.print()
+                except UnicodeDecodeError:
+                    # Fallback for decode errors - treat as binary
+                    lexer_name = ""
+
+            if not lexer_name:
+                # Binary content (e.g., multipart/form-data, file uploads)
+                console.print(f'<{len(req.content)} bytes of binary data>')
         elif req.method in ('POST', 'PUT', 'PATCH'):
             console.print('[italic]Empty request body[/italic]')
         # if show_request_headers or content:
