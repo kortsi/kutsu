@@ -1556,9 +1556,10 @@ class HttpRequest(AsyncAction):
                     syntax_console.print(content)
                     console.print()
                 except UnicodeDecodeError:
-                    # Fallback for decode errors
-                    console.print(f'<{len(req.content)} bytes of binary data>')
-            else:
+                    # Fallback for decode errors - treat as binary
+                    lexer_name = ""
+
+            if not lexer_name:
                 # Binary content (e.g., multipart/form-data, file uploads)
                 console.print(f'<{len(req.content)} bytes of binary data>')
         elif req.method in ('POST', 'PUT', 'PATCH'):
