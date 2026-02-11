@@ -280,7 +280,7 @@ class HttpRequest(AsyncAction):
             yield 'auth_token', self.auth_token
         if self.auth_username is not None:
             yield 'auth_username', self.auth_username
-        if self.auth_username is not None:
+        if self.auth_password is not None:
             yield 'auth_password', self.auth_password
         if self.content_type is not None:
             yield 'content_type', self.content_type
@@ -874,8 +874,8 @@ class HttpRequest(AsyncAction):
             # digest: auth = httpx.DigestAuth('user', 'pass')
             if scheme is None:
                 scheme = 'Basic'
-            if scheme == 'Basic':
-                token = base64.b64encode('f{username}:{password}'.encode('utf-8'))
+            if scheme.lower() == 'basic':
+                token = base64.b64encode(f'{username}:{password}'.encode('utf-8')).decode('ascii')
             else:
                 raise ValueError(f'Unsupported authorization scheme: {scheme}')
 
@@ -1007,8 +1007,8 @@ class HttpRequest(AsyncAction):
             config.cookies, state, mask_secrets=mask_secrets, as_str=True
         )
         if self_cookies is not None:
-            if not isinstance(cookies, (dict, Cookies)):
-                raise TypeError(f'cookies must be a dict or Cookies, not {type(cookies)}')
+            if not isinstance(self_cookies, (dict, Cookies)):
+                raise TypeError(f'cookies must be a dict or Cookies, not {type(self_cookies)}')
             cookies.update(self_cookies)
 
         return cookies or None
@@ -1443,7 +1443,6 @@ class HttpRequest(AsyncAction):
         req = self.request
         now = time.strftime('%Y-%m-%d %H:%M:%S %Z', time.localtime())
         console.print(f'[bold]*** Fetch {now} [{name}][/bold]')
-        return
         method = self._prepared_data_masked.method
         url = self._prepared_data_masked.url
         status = f'{method} {url} HTTP/1.1'
@@ -1471,10 +1470,27 @@ class HttpRequest(AsyncAction):
                 word_wrap=True,
             )
         )
-        content = req.content.decode('utf-8')
-        if content:
-            syntax_console.print(content)
-            console.print()
+        # TODO: mask secrets in request content
+        # TODO: pretty print json
+
+        # Check if content is text or binary based on Content-Type
+        content_type = req.headers.get('Content-Type')
+        lexer_name = get_lexer_for_content_type(content_type)
+
+        if req.content:
+            if lexer_name:
+                # Text content - decode with error handling
+                try:
+                    content = req.content.decode('utf-8')
+                    syntax_console.print(content)
+                    console.print()
+                except UnicodeDecodeError:
+                    # Fallback for decode errors - treat as binary
+                    lexer_name = ""
+
+            if not lexer_name:
+                # Binary content (e.g., multipart/form-data, file uploads)
+                console.print(f'<{len(req.content)} bytes of binary data>')
         elif req.method in ('POST', 'PUT', 'PATCH'):
             console.print('[italic]Empty request body[/italic]')
 
@@ -1629,7 +1645,7 @@ class RequestConfig(NamedTuple):
     show_request: bool | None = HttpRequest.show_request
     show_request_headers: bool | None = HttpRequest.show_request_headers
     show_response: bool | None = HttpRequest.show_response
-    show_response_headers: bool | None = HttpRequest.show_request_headers
+    show_response_headers: bool | None = HttpRequest.show_response_headers
     show_response_body: bool | None = HttpRequest.show_response_body
     show_headers: bool | None = HttpRequest.show_headers
     show_max_body: int | None = HttpRequest.show_max_body
